@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "marseille-sample-001",
+        "sourceWayIds": ["way/1001"],
+        "metrics": {
+          "steps": { "value": 1, "coverage": 1 },
+          "slope": { "uphill": 5, "downhill": 8, "coverage": 1 },
+          "surface": { "value": 0.2, "coverage": 0.8 },
+          "crossingEquipment": { "value": 0.25, "coverage": 1 },
+          "noise": { "value": 62, "coverage": 1 },
+          "freeServices": { "value": 0.6, "coverage": 1 }
+        },
+        "relations": [
+          { "indicator": "steps", "sourceId": "osm", "method": "intersects", "confidence": 1 },
+          { "indicator": "slope", "sourceId": "ign-rge-alti", "method": "sampled", "confidence": 0.8 },
+          { "indicator": "surface", "sourceId": "osm", "method": "intersects", "confidence": 0.8 },
+          { "indicator": "crossingEquipment", "sourceId": "osm", "method": "nearest", "distance": 8, "confidence": 0.9 },
+          { "indicator": "noise", "sourceId": "amp-noise", "method": "sampled", "confidence": 0.9 },
+          { "indicator": "freeServices", "sourceId": "osm", "method": "nearest", "distance": 120, "confidence": 0.8 }
+        ]
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[5.3698, 43.2951], [5.3701, 43.2953]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "marseille-sample-002",
+        "sourceWayIds": ["way/1002"],
+        "metrics": {
+          "steps": { "value": 0, "coverage": 0.5 }
+        },
+        "relations": [
+          { "indicator": "steps", "sourceId": "osm", "method": "intersects", "confidence": 0.7 }
+        ]
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[5.3701, 43.2953], [5.3704, 43.2955]]
+      }
+    }
+  ]
+}

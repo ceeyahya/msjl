@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "sample-marseille-2026-10-28",
+  "builtAt": "2026-10-28T00:00:00.000Z",
+  "formulaVersion": "v1",
+  "artifacts": {
+    "config": {
+      "path": "config.json",
+      "sha256": "7c004a0affc0e4cf4a1bae49aee869792edd22f472d5f5b74606227c7170e41e"
+    },
+    "sources": {
+      "path": "sources.json",
+      "sha256": "023d5ece67ddd8986effc1cf48b6afbdcc4d100edd5d66a86edbddb3cbe96360"
+    },
+    "segments": {
+      "path": "segments.geojson",
+      "sha256": "0b20f36508e7d9445d33ba97bdd6b22e8035d2969ead0bf4bf1ef6ce14492729"
+    }
+  }
+}

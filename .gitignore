@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Local-only agent documentation
+AGENTS.md
+CLAUDE.md
+CONTEXT.md
+CONTEXT-MAP.md
+mjsl-rewrite-handoff.md
+docs/agents/
+docs/adr/

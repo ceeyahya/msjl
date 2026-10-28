@@ -1,0 +1,20 @@
+[
+  {
+    "id": "osm",
+    "name": "OpenStreetMap",
+    "version": "2026-10-28",
+    "licence": "ODbL-1.0"
+  },
+  {
+    "id": "ign-rge-alti",
+    "name": "IGN RGE ALTI",
+    "version": "2026-10-01",
+    "licence": "Licence Ouverte 2.0"
+  },
+  {
+    "id": "amp-noise",
+    "name": "Metropole Aix-Marseille-Provence noise map",
+    "version": "2026-09-01",
+    "licence": "Licence Ouverte 2.0"
+  }
+]

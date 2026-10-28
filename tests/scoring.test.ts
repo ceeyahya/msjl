@@ -1,0 +1,117 @@
+import { describe, expect, it } from "vitest";
+
+import { linearBarrier, scoreSegment, scoreSegments, type LocalAccessibilityConfig } from "../src/scoring.js";
+
+const config: LocalAccessibilityConfig = {
+  version: "1.0.0",
+  formulaVersion: "v1",
+  dimensionBarrierCap: 0.9,
+  indicators: {
+    steps: {
+      dimension: "physical",
+      kind: "linear",
+      noProblemAt: 0,
+      totalObstacleAt: 10,
+      weight: 2,
+    },
+    slope: {
+      dimension: "physical",
+      kind: "directional-linear",
+      noProblemAt: 4,
+      totalObstacleAt: 12,
+      weight: 1,
+    },
+    seating: {
+      dimension: "physical",
+      kind: "linear",
+      noProblemAt: 3,
+      totalObstacleAt: 0,
+      weight: 1,
+    },
+    noise: {
+      dimension: "sensory",
+      kind: "linear",
+      noProblemAt: 55,
+      totalObstacleAt: 85,
+      weight: 1,
+    },
+  },
+  dimensions: {
+    physical: { minimumCoverage: 0.5 },
+    sensory: { minimumCoverage: 1 },
+  },
+  profiles: {
+    wheelchair: {
+      minimumCoverage: 0.5,
+      weights: { physical: 0.75, sensory: 0.25 },
+    },
+  },
+};
+
+describe("linearBarrier", () => {
+  it("maps either threshold direction into a clamped barrier", () => {
+    expect(linearBarrier(6, 4, 12)).toBe(0.25);
+    expect(linearBarrier(15, 4, 12)).toBe(1);
+    expect(linearBarrier(1.5, 3, 0)).toBe(0.5);
+    expect(linearBarrier(4, 3, 0)).toBe(0);
+  });
+});
+
+describe("scoreSegment", () => {
+  it("uses weighted available indicators, preserves directional slope, and normalizes profile weights", () => {
+    const result = scoreSegment(
+      {
+        id: "sample-001",
+        metrics: {
+          steps: { value: 5, coverage: 1 },
+          slope: { uphill: 6, downhill: 8, coverage: 1 },
+        },
+      },
+      config,
+      "wheelchair",
+    );
+
+    expect(result.indicators.slope).toMatchObject({
+      barrier: 0.5,
+      directionalValues: { uphill: 6, downhill: 8 },
+    });
+    expect(result.dimensions.physical).toMatchObject({ barrier: 0.5, coverage: 0.75, sufficient: true });
+    expect(result.dimensions.sensory).toMatchObject({ barrier: undefined, coverage: 0, sufficient: false });
+    expect(result.profile).toEqual({ score: 0.5, coverage: 0.75, sufficient: true });
+  });
+
+  it("returns an insufficient profile when its available dimensions miss the profile coverage gate", () => {
+    const result = scoreSegment(
+      { id: "sample-002", metrics: { steps: { value: 5, coverage: 1 } } },
+      { ...config, profiles: { wheelchair: { minimumCoverage: 0.8, weights: { physical: 0.75, sensory: 0.25 } } } },
+      "wheelchair",
+    );
+
+    expect(result.profile).toEqual({ score: undefined, coverage: 0.75, sufficient: false });
+  });
+
+  it("caps a saturated dimension before calculating the profile score", () => {
+    const result = scoreSegment(
+      { id: "sample-003", metrics: { steps: { value: 10, coverage: 1 } } },
+      config,
+      "wheelchair",
+    );
+
+    expect(result.profile.coverage).toBe(0.75);
+    expect(result.profile.sufficient).toBe(true);
+    expect(result.profile.score).toBeCloseTo(0.1);
+  });
+
+  it("reports the proportion of segments with sufficient profile evidence", () => {
+    const result = scoreSegments(
+      [
+        { id: "sample-004", metrics: { steps: { value: 5, coverage: 1 } } },
+        { id: "sample-005", metrics: {} },
+      ],
+      config,
+      "wheelchair",
+    );
+
+    expect(result.mapCoverage).toEqual({ coverage: 0.5, sufficientSegments: 1, totalSegments: 2 });
+  });
+});
