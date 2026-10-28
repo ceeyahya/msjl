@@ -77,7 +77,7 @@ export interface SegmentScores {
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 
-const isDirectionalMetric = (metric: ScalarMetric | DirectionalMetric): metric is DirectionalMetric =>
+export const isDirectionalMetric = (metric: ScalarMetric | DirectionalMetric): metric is DirectionalMetric =>
   "uphill" in metric;
 
 export function scoreSegment(

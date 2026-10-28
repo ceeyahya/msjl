@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import type { LocalAccessibilityRelease } from "../release.js";
 import { scoreSegments, type SegmentScore } from "../scoring.js";
 import { cn } from "../lib/utils.js";
+import { CalculationInspector } from "./calculation-inspector.js";
 import { LocalAccessibilityMap } from "./local-accessibility-map.js";
 import { Badge } from "./ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card.js";
@@ -173,6 +174,7 @@ export function LocalAccessibilityExplorer({
             </dl>
           </CardContent>
         </Card>
+        <CalculationInspector profileKey={profileKey} release={release} score={selectedScore} segment={selectedSegment} />
       </section>
     </section>
   );
