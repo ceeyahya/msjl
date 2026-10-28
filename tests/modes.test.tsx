@@ -1,0 +1,33 @@
+import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { renderToString } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { getRouter } from "../src/router.js";
+
+async function renderRoute(pathname: string): Promise<string> {
+  const router = getRouter();
+  router.update({ history: createMemoryHistory({ initialEntries: [pathname] }) });
+  await router.load();
+
+  return renderToString(<RouterProvider router={router} />);
+}
+
+describe("analysis modes", () => {
+  it("starts on Local Accessibility", async () => {
+    const page = await renderRoute("/");
+
+    expect(page).toContain("Local Accessibility");
+    expect(page).toContain("Local segments are prepared for exploration");
+  });
+
+  it.each([
+    ["/neighborhood-context", "Neighborhood Context", "No Neighborhood Context release is available yet"],
+    ["/community-conditions", "Community Conditions", "No Community Conditions release is available yet"],
+  ])("keeps %s separate from the Local Accessibility baseline", async (pathname, heading, unavailable) => {
+    const page = await renderRoute(pathname);
+
+    expect(page).toContain(heading);
+    expect(page).toContain(unavailable);
+    expect(page).not.toContain("Local segments are prepared for exploration");
+  });
+});
