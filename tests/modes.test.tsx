@@ -17,7 +17,8 @@ describe("analysis modes", () => {
     const page = await renderRoute("/");
 
     expect(page).toContain("Local Accessibility");
-    expect(page).toContain("Local segments are prepared for exploration");
+    expect(page).toContain("Explore release-backed segments");
+    expect(page).toContain("Score 78%");
   });
 
   it.each([
@@ -28,6 +29,6 @@ describe("analysis modes", () => {
 
     expect(page).toContain(heading);
     expect(page).toContain(unavailable);
-    expect(page).not.toContain("Local segments are prepared for exploration");
+    expect(page).not.toContain("Explore release-backed segments");
   });
 });

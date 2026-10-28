@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { Badge } from "../components/ui/badge.js";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
+import { LocalAccessibilityExplorer } from "../components/local-accessibility-explorer.js";
+import { sampleRelease } from "../sample-release.js";
 
 export const Route = createFileRoute("/")({ component: LocalAccessibility });
 
@@ -16,18 +17,7 @@ function LocalAccessibility() {
           configuration, source, and coverage.
         </p>
       </section>
-      <Card className="mt-16 sm:mt-24">
-        <CardHeader>
-          <Badge className="mb-2" variant="secondary">Current release</Badge>
-          <CardTitle id="local-status" className="text-2xl">Local segments are prepared for exploration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <CardDescription className="max-w-xl text-base leading-7">
-            The sample baseline release is available. Map and segment inspection arrive in the next Local
-            Accessibility ticket.
-          </CardDescription>
-        </CardContent>
-      </Card>
+      <LocalAccessibilityExplorer profileKey="wheelchair" release={sampleRelease} />
     </main>
   );
 }
