@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MJSL: Reactive Current Conditions Architecture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #16211f;
+        --muted: #5f6f6b;
+        --paper: #f7f6f0;
+        --panel: #fffefa;
+        --line: #ced5cf;
+        --baseline: #356859;
+        --baseline-soft: #e2eee8;
+        --reactive: #b64926;
+        --reactive-soft: #f9e7df;
+        --future: #64748b;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      main { max-width: 1240px; margin: 0 auto; padding: 48px 28px 64px; }
+      .eyebrow { color: var(--reactive); font-size: .75rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+      h1 { max-width: 850px; margin: 10px 0 14px; font-family: ui-serif, Georgia, serif; font-size: clamp(2.3rem, 5vw, 4.4rem); font-weight: 500; letter-spacing: -.045em; line-height: .98; }
+      .intro { max-width: 760px; color: var(--muted); font-size: 1.1rem; line-height: 1.55; }
+      .key { display: flex; flex-wrap: wrap; gap: 18px; margin: 28px 0; color: var(--muted); font-size: .9rem; }
+      .key span { display: inline-flex; align-items: center; gap: 7px; }
+      .key i { width: 28px; height: 3px; display: inline-block; }
+      .key .baseline { background: var(--baseline); }
+      .key .reactive { background: var(--reactive); }
+      .key .derived { border-top: 3px dashed var(--ink); height: 0; }
+      .diagram { overflow-x: auto; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); box-shadow: 0 18px 48px rgb(22 33 31 / 7%); }
+      svg { display: block; min-width: 1080px; width: 100%; height: auto; }
+      .node rect { rx: 12px; ry: 12px; stroke-width: 1.5px; }
+      .node text { fill: var(--ink); font-size: 15px; font-weight: 700; }
+      .node .small { fill: var(--muted); font-size: 12px; font-weight: 400; }
+      .baseline-node rect { fill: var(--baseline-soft); stroke: var(--baseline); }
+      .reactive-node rect { fill: var(--reactive-soft); stroke: var(--reactive); }
+      .neutral-node rect { fill: #f5f6f5; stroke: var(--future); }
+      .column-title { font-size: 12px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; }
+      .column-baseline { fill: var(--baseline); }
+      .column-reactive { fill: var(--reactive); }
+      .column-output { fill: var(--ink); }
+      .lane { fill: none; stroke: var(--line); stroke-width: 1px; }
+      .arrow-baseline { fill: none; stroke: var(--baseline); stroke-width: 2.4px; marker-end: url(#arrow-baseline); }
+      .arrow-reactive { fill: none; stroke: var(--reactive); stroke-width: 2.4px; marker-end: url(#arrow-reactive); }
+      .arrow-derived { fill: none; stroke: var(--ink); stroke-dasharray: 6 5; stroke-width: 2px; marker-end: url(#arrow-ink); }
+      .label { fill: var(--muted); font-size: 11px; }
+      .note { margin: 24px 0 0; padding: 20px 22px; border-left: 4px solid var(--reactive); background: #fff4ee; color: #62311f; line-height: 1.5; }
+      .note strong { display: block; margin-bottom: 3px; }
+      @media (max-width: 640px) { main { padding: 32px 16px 48px; } }
+      @media print { body { background: white; } main { max-width: none; padding: 0; } .diagram { box-shadow: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">Architecture delta</div>
+      <h1>From rebuild-only map to reactive current conditions</h1>
+      <p class="intro">The baseline release remains reproducible and independently auditable. The change is an additive live observation plane that derives provisional conditions for only the affected segments, then shares the update with other open clients.</p>
+
+      <div class="key" aria-label="Diagram key">
+        <span><i class="baseline"></i>authoritative baseline release</span>
+        <span><i class="reactive"></i>new reactive path</span>
+        <span><i class="derived"></i>derived current condition</span>
+      </div>
+
+      <div class="diagram">
+        <svg viewBox="0 0 1180 730" role="img" aria-labelledby="title description">
+          <title id="title">MJSL architecture before and after reactive observations</title>
+          <desc id="description">The previous architecture runs source data through a release build to a static map. The new architecture retains this baseline and adds an optimistic report flow, database, change feed, and affected-segment scoring into the map.</desc>
+          <defs>
+            <marker id="arrow-baseline" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#356859" /></marker>
+            <marker id="arrow-reactive" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#b64926" /></marker>
+            <marker id="arrow-ink" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#16211f" /></marker>
+          </defs>
+
+          <text x="52" y="54" class="column-title column-baseline">1 / Baseline, unchanged</text>
+          <text x="466" y="54" class="column-title column-reactive">2 / Current conditions, added</text>
+          <text x="916" y="54" class="column-title column-output">3 / User sees</text>
+          <path class="lane" d="M35 82 H1145 M35 373 H1145" />
+
+          <g class="node baseline-node">
+            <rect x="52" y="117" width="182" height="89" />
+            <text x="143" y="151" text-anchor="middle">Open / official sources</text>
+            <text x="143" y="175" class="small" text-anchor="middle">OSM, terrain, noise, etc.</text>
+          </g>
+          <g class="node baseline-node">
+            <rect x="279" y="117" width="174" height="89" />
+            <text x="366" y="151" text-anchor="middle">Release builder</text>
+            <text x="366" y="175" class="small" text-anchor="middle">segments + source metrics</text>
+          </g>
+          <g class="node baseline-node">
+            <rect x="498" y="117" width="192" height="89" />
+            <text x="594" y="151" text-anchor="middle">Immutable release</text>
+            <text x="594" y="175" class="small" text-anchor="middle">versioned scores + provenance</text>
+          </g>
+          <g class="node baseline-node">
+            <rect x="735" y="117" width="176" height="89" />
+            <text x="823" y="151" text-anchor="middle">Baseline map data</text>
+            <text x="823" y="175" class="small" text-anchor="middle">loaded by every client</text>
+          </g>
+          <path class="arrow-baseline" d="M234 162 H276" />
+          <path class="arrow-baseline" d="M453 162 H495" />
+          <path class="arrow-baseline" d="M690 162 H732" />
+
+          <text x="52" y="267" class="label">Previous architecture stopped here. A contribution required another full release build before it could appear on the map.</text>
+          <path d="M52 290 H911" stroke="#9ca9a4" stroke-width="1.5" stroke-dasharray="5 5" />
+          <text x="915" y="294" class="label">old boundary</text>
+
+          <g class="node reactive-node">
+            <rect x="52" y="422" width="182" height="94" />
+            <text x="143" y="456" text-anchor="middle">Obstacle report</text>
+            <text x="143" y="480" class="small" text-anchor="middle">optimistic browser update</text>
+          </g>
+          <g class="node reactive-node">
+            <rect x="279" y="422" width="174" height="94" />
+            <text x="366" y="456" text-anchor="middle">Segment matching</text>
+            <text x="366" y="480" class="small" text-anchor="middle">nearest eligible segment</text>
+          </g>
+          <g class="node reactive-node">
+            <rect x="498" y="422" width="192" height="94" />
+            <text x="594" y="456" text-anchor="middle">Observation log</text>
+            <text x="594" y="480" class="small" text-anchor="middle">Supabase Postgres + PostGIS</text>
+          </g>
+          <g class="node reactive-node">
+            <rect x="735" y="422" width="176" height="94" />
+            <text x="823" y="456" text-anchor="middle">Supabase Realtime</text>
+            <text x="823" y="480" class="small" text-anchor="middle">WebSocket change broadcast</text>
+          </g>
+          <path class="arrow-reactive" d="M234 469 H276" />
+          <path class="arrow-reactive" d="M453 469 H495" />
+          <path class="arrow-reactive" d="M690 469 H732" />
+
+          <g class="node neutral-node">
+            <rect x="498" y="576" width="192" height="89" />
+            <text x="594" y="610" text-anchor="middle">Affected-segment scorer</text>
+            <text x="594" y="634" class="small" text-anchor="middle">baseline + active reports</text>
+          </g>
+          <path class="arrow-derived" d="M594 206 V573" />
+          <text x="605" y="347" class="label">baseline metrics</text>
+          <path class="arrow-reactive" d="M594 516 V573" />
+          <path class="arrow-reactive" d="M823 516 V554 H693" />
+          <text x="777" y="547" class="label">other clients</text>
+
+          <g class="node neutral-node">
+            <rect x="956" y="146" width="168" height="100" />
+            <text x="1040" y="181" text-anchor="middle">Baseline score</text>
+            <text x="1040" y="205" class="small" text-anchor="middle">reproducible release</text>
+            <text x="1040" y="223" class="small" text-anchor="middle">never overwritten</text>
+          </g>
+          <g class="node reactive-node">
+            <rect x="956" y="437" width="168" height="100" />
+            <text x="1040" y="472" text-anchor="middle">Current condition</text>
+            <text x="1040" y="496" class="small" text-anchor="middle">provisional score + reports</text>
+            <text x="1040" y="514" class="small" text-anchor="middle">updates map immediately</text>
+          </g>
+          <path class="arrow-baseline" d="M911 162 H953" />
+          <path class="arrow-derived" d="M690 620 H850 V487 H953" />
+          <text x="709" y="612" class="label">recompute only affected segments</text>
+        </svg>
+      </div>
+
+      <aside class="note">
+        <strong>The key boundary stays intact.</strong>
+        A community report changes the provisional current-condition result, not the archived baseline. A later scheduled source refresh may create a new baseline release, but reactive contributions never require it.
+      </aside>
+    </main>
+  </body>
+</html>

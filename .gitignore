@@ -7,6 +7,6 @@ AGENTS.md
 CLAUDE.md
 CONTEXT.md
 CONTEXT-MAP.md
-mjsl-rewrite-handoff.md
+docs/handoffs/
 docs/agents/
 docs/adr/
