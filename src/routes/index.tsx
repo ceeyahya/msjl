@@ -3,8 +3,8 @@ import { useServerFn } from "@tanstack/react-start";
 
 import { Badge } from "../components/ui/badge.js";
 import { LocalAccessibilityExplorer } from "../components/local-accessibility-explorer.js";
-import { getCurrentConditions, submitObstacleObservation } from "../current-conditions-api.js";
-import type { ObstacleSubmission } from "../current-conditions.js";
+import { getCurrentConditions, submitConditionEvent, submitObstacleObservation } from "../current-conditions-api.js";
+import type { ConditionEventSubmission, ObstacleSubmission } from "../current-conditions.js";
 import { sampleRelease } from "../sample-release.js";
 
 export const Route = createFileRoute("/")({
@@ -18,6 +18,7 @@ export const Route = createFileRoute("/")({
 function LocalAccessibility() {
   const currentConditions = Route.useLoaderData();
   const submitObstacle = useServerFn(submitObstacleObservation);
+  const submitEvent = useServerFn(submitConditionEvent);
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
@@ -33,6 +34,7 @@ function LocalAccessibility() {
         currentConditions={currentConditions}
         profileKey="wheelchair"
         release={sampleRelease}
+        submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
         submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
       />
     </main>

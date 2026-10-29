@@ -12,6 +12,7 @@ afterEach(cleanup);
 
 const currentConditions: CurrentCondition[] = [{
   projection: {
+    active: true,
     condition: "reported-obstacle",
     label: "Provisional community-derived condition",
     policyVersion: "community-condition-v1",
@@ -23,8 +24,10 @@ const currentConditions: CurrentCondition[] = [{
     id: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
     category: "blocked-path",
     description: "Temporary construction barrier narrows the pavement.",
+    eventType: "obstacle",
     observedAt: "2026-10-29",
     recordedAt: "2026-10-29T12:00:00.000Z",
+    relatedObservationId: null,
   }],
 }];
 
@@ -91,7 +94,7 @@ describe("LocalAccessibilityExplorer", () => {
     expect(within(explorer).getByRole("button", { name: /marseille-sample-001.*provisional condition/i })).toBeTruthy();
     const selected = screen.getByRole("region", { name: /selected segment: marseille-sample-001/i });
     expect(within(selected).getByText("Provisional community-derived condition")).toBeTruthy();
-    expect(within(selected).getByRole("list", { name: "Active community evidence" }).textContent).toContain("Temporary construction barrier narrows the pavement.");
+    expect(within(selected).getByRole("list", { name: "Community evidence timeline" }).textContent).toContain("Temporary construction barrier narrows the pavement.");
     expect(within(selected).getByText("Score 78%")).toBeTruthy();
 
     await user.click(within(explorer).getByRole("button", { name: /marseille-sample-002/i }));
@@ -125,6 +128,7 @@ describe("LocalAccessibilityExplorer", () => {
             eligibilityRuleVersion: "conservative-pedestrian-network-v1",
           },
           projection: {
+            active: true,
             condition: "reported-obstacle",
             label: "Provisional community-derived condition",
             policyVersion: "community-condition-v1",

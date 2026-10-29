@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assignObstacle, validateObstacleSubmission } from "../src/current-conditions.js";
+import { assignObstacle, validateConditionEventSubmission, validateObstacleSubmission } from "../src/current-conditions.js";
 
 const eligibleSegment = {
   id: "marseille-sample-001",
@@ -37,6 +37,7 @@ describe("current-condition obstacle submission", () => {
         eligibilityRuleVersion: "v1",
       },
       projection: {
+        active: true,
         condition: "reported-obstacle",
         label: "Provisional community-derived condition",
         policyVersion: "v1",
@@ -93,5 +94,14 @@ describe("current-condition obstacle submission", () => {
       longitude: 5.37005,
       observedAt: "2026-02-30",
     })).toThrow("observedAt must be an ISO calendar date");
+  });
+
+  it("rejects lifecycle events without an obstacle UUID", () => {
+    expect(() => validateConditionEventSubmission({
+      eventType: "resolution",
+      obstacleObservationId: "not-an-obstacle-id",
+      description: "The barrier is no longer present.",
+      observedAt: "2026-10-30",
+    })).toThrow("obstacleObservationId must be a UUID");
   });
 });

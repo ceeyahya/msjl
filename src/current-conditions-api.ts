@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
-import { validateObstacleSubmission, type CurrentCondition } from "./current-conditions.js";
+import { validateConditionEventSubmission, validateObstacleSubmission, type CurrentCondition } from "./current-conditions.js";
 
 const policy = {
   assignmentThresholdMetres: 15,
@@ -23,6 +23,25 @@ export const submitObstacleObservation = createServerFn({ method: "POST" })
         baselineReleaseId: sampleRelease.manifest.releaseId,
       });
     } catch {
+      throw new Error("Community Conditions is temporarily unavailable. Try again later.");
+    }
+  });
+
+export const submitConditionEvent = createServerFn({ method: "POST" })
+  .validator(validateConditionEventSubmission)
+  .handler(async ({ data }) => {
+    const [{ sampleRelease }, { persistConditionEvent }] = await Promise.all([
+      import("./sample-release.js"),
+      import("./server/current-conditions-store.server.js"),
+    ]);
+
+    try {
+      return await persistConditionEvent(data, {
+        ...policy,
+        baselineReleaseId: sampleRelease.manifest.releaseId,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Invalid condition event:")) throw error;
       throw new Error("Community Conditions is temporarily unavailable. Try again later.");
     }
   });

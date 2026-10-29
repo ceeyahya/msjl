@@ -43,6 +43,7 @@ export interface UnmatchedObservation {
 }
 
 export interface CurrentConditionProjection {
+  active: boolean;
   condition: "reported-obstacle";
   label: "Provisional community-derived condition";
   policyVersion: string;
@@ -78,8 +79,22 @@ export interface CurrentConditionObservation {
   id: string;
   category: ObstacleCategory;
   description: string;
+  eventType: "obstacle" | "resolution" | "reopening";
   observedAt: string;
   recordedAt: string;
+  relatedObservationId: string | null;
+}
+
+export interface ConditionEventSubmission {
+  eventType: "resolution" | "reopening";
+  obstacleObservationId: string;
+  description: string;
+  observedAt: string;
+}
+
+export interface PersistedConditionEventResult {
+  observation: CurrentConditionObservation;
+  projection: CurrentConditionProjection;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -87,6 +102,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 function invalidSubmission(message: string): never {
   throw new Error(`Invalid obstacle observation: ${message}`);
+}
+
+function invalidConditionEvent(message: string): never {
+  throw new Error(`Invalid condition event: ${message}`);
 }
 
 function validObservedDate(value: unknown): value is string {
@@ -117,6 +136,27 @@ export function validateObstacleSubmission(value: unknown): ObstacleSubmission {
     description: value.description.trim(),
     latitude: value.latitude,
     longitude: value.longitude,
+    observedAt: value.observedAt,
+  };
+}
+
+export function validateConditionEventSubmission(value: unknown): ConditionEventSubmission {
+  if (!isRecord(value)) invalidConditionEvent("event submission must be an object");
+  if (value.eventType !== "resolution" && value.eventType !== "reopening") {
+    invalidConditionEvent("eventType must be resolution or reopening");
+  }
+  if (typeof value.obstacleObservationId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.obstacleObservationId)) {
+    invalidConditionEvent("obstacleObservationId must be a UUID");
+  }
+  if (typeof value.description !== "string" || value.description.trim().length === 0 || value.description.trim().length > 500) {
+    invalidConditionEvent("description must contain between 1 and 500 characters");
+  }
+  if (!validObservedDate(value.observedAt)) invalidConditionEvent("observedAt must be an ISO calendar date");
+
+  return {
+    eventType: value.eventType,
+    obstacleObservationId: value.obstacleObservationId,
+    description: value.description.trim(),
     observedAt: value.observedAt,
   };
 }
@@ -196,6 +236,7 @@ export function assignObstacle(
       eligibilityRuleVersion: policy.eligibilityRuleVersion,
     },
     projection: {
+      active: true,
       condition: "reported-obstacle",
       label: "Provisional community-derived condition",
       policyVersion: policy.projectionPolicyVersion,

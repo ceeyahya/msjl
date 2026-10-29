@@ -1,14 +1,44 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
+import { useState } from "react";
 
 import { Badge } from "../components/ui/badge.js";
 import { CommunityConditionsPanel } from "../components/community-conditions-panel.js";
-import { submitObstacleObservation } from "../current-conditions-api.js";
-import type { ObstacleSubmission } from "../current-conditions.js";
-export const Route = createFileRoute("/community-conditions")({ component: CommunityConditions });
+import { ConditionLifecyclePanel } from "../components/condition-lifecycle-panel.js";
+import { getCurrentConditions, submitConditionEvent, submitObstacleObservation } from "../current-conditions-api.js";
+import type { ConditionEventSubmission, CurrentCondition, ObstacleSubmission, PersistedConditionEventResult, PersistedObstacleResult } from "../current-conditions.js";
+export const Route = createFileRoute("/community-conditions")({
+  component: CommunityConditions,
+  loader: (): Promise<CurrentCondition[]> | CurrentCondition[] => {
+    if (typeof window === "undefined" && !process.env.DATABASE_URL) return [];
+    return getCurrentConditions();
+  },
+});
 
 function CommunityConditions() {
   const submitObstacle = useServerFn(submitObstacleObservation);
+  const submitEvent = useServerFn(submitConditionEvent);
+  const [conditions, setConditions] = useState<CurrentCondition[]>(Route.useLoaderData());
+
+  function reconcileObstacle(result: PersistedObstacleResult) {
+    if (!("projection" in result)) return;
+    setConditions((previous) => {
+      const existing = previous.find((condition) => condition.projection.segmentId === result.projection.segmentId);
+      return [
+        ...previous.filter((condition) => condition.projection.segmentId !== result.projection.segmentId),
+        {
+          projection: result.projection,
+          observations: [...(existing?.observations ?? []), { ...result.observation, eventType: "obstacle", relatedObservationId: null }],
+        },
+      ];
+    });
+  }
+
+  function reconcileEvent(result: PersistedConditionEventResult) {
+    setConditions((previous) => previous.map((condition) => condition.projection.segmentId === result.projection.segmentId
+      ? { projection: result.projection, observations: [...condition.observations, result.observation] }
+      : condition));
+  }
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
@@ -21,7 +51,13 @@ function CommunityConditions() {
         </p>
       </section>
       <CommunityConditionsPanel
+        onSaved={reconcileObstacle}
         submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
+      />
+      <ConditionLifecyclePanel
+        conditions={conditions}
+        onSaved={reconcileEvent}
+        submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
       />
     </main>
   );

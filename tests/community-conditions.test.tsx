@@ -46,6 +46,7 @@ describe("CommunityConditionsPanel", () => {
         eligibilityRuleVersion: "conservative-pedestrian-network-v1",
       },
       projection: {
+        active: true,
         condition: "reported-obstacle",
         label: "Provisional community-derived condition",
         policyVersion: "community-condition-v1",

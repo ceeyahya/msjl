@@ -96,6 +96,7 @@ describe("LocalAccessibilityMap", () => {
             eligibilityRuleVersion: "conservative-pedestrian-network-v1",
           },
           projection: {
+            active: true,
             condition: "reported-obstacle",
             label: "Provisional community-derived condition",
             policyVersion: "community-condition-v1",
@@ -117,5 +118,68 @@ describe("LocalAccessibilityMap", () => {
     expect(Map).toHaveBeenCalledTimes(1);
     const data = source.setData.mock.calls.at(-1)?.[0] as { features: Array<{ properties: { id: string; currentCondition: boolean } }> };
     expect(data.features.find((feature) => feature.properties.id === "marseille-sample-001")?.properties.currentCondition).toBe(true);
+  });
+
+  it("removes the overlay from the live map source after a resolution observation", async () => {
+    Object.defineProperty(window, "WebGLRenderingContext", { configurable: true, value: class {} });
+    const user = userEvent.setup();
+    const obstacleId = "e3fb5738-6797-4ed8-95d5-c45bc4ce789a";
+    render(
+      <LocalAccessibilityExplorer
+        currentConditions={[{
+          projection: {
+            active: true,
+            condition: "reported-obstacle",
+            label: "Provisional community-derived condition",
+            policyVersion: "community-condition-v1",
+            baselineReleaseId: sampleRelease.manifest.releaseId,
+            segmentId: "marseille-sample-001",
+            localInfluenceMetres: 0,
+          },
+          observations: [{
+            id: obstacleId,
+            category: "blocked-path",
+            description: "Temporary construction barrier narrows the pavement.",
+            eventType: "obstacle",
+            observedAt: "2026-10-29",
+            recordedAt: "2026-10-29T12:00:00.000Z",
+            relatedObservationId: null,
+          }],
+        }]}
+        profileKey="wheelchair"
+        release={sampleRelease}
+        submitConditionEvent={async () => ({
+          observation: {
+            id: "2e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+            category: "blocked-path",
+            description: "The barrier is no longer present.",
+            eventType: "resolution",
+            observedAt: "2026-10-30",
+            recordedAt: "2026-10-30T12:00:00.000Z",
+            relatedObservationId: obstacleId,
+          },
+          projection: {
+            active: false,
+            condition: "reported-obstacle",
+            label: "Provisional community-derived condition",
+            policyVersion: "community-condition-v1",
+            baselineReleaseId: sampleRelease.manifest.releaseId,
+            segmentId: "marseille-sample-001",
+            localInfluenceMetres: 0,
+          },
+        })}
+      />,
+    );
+
+    await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("release-segments", expect.any(Object)));
+    source.setData.mockClear();
+    await user.type(screen.getByLabelText("What did you observe?"), "The barrier is no longer present.");
+    await user.type(screen.getByLabelText("Observed on"), "2026-10-30");
+    await user.click(screen.getByRole("button", { name: "Save change observation" }));
+
+    await waitFor(() => expect(source.setData).toHaveBeenCalled());
+    expect(Map).toHaveBeenCalledTimes(1);
+    const data = source.setData.mock.calls.at(-1)?.[0] as { features: Array<{ properties: { id: string; currentCondition: boolean } }> };
+    expect(data.features.find((feature) => feature.properties.id === "marseille-sample-001")?.properties.currentCondition).toBe(false);
   });
 });

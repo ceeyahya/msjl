@@ -2,11 +2,12 @@ import { CircleAlert, CircleCheck, CircleSlash } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import type { LocalAccessibilityRelease } from "../release.js";
-import type { CurrentCondition, ObstacleSubmission, PersistedObstacleResult } from "../current-conditions.js";
+import type { ConditionEventSubmission, CurrentCondition, ObstacleSubmission, PersistedConditionEventResult, PersistedObstacleResult } from "../current-conditions.js";
 import { scoreSegments, type SegmentScore } from "../scoring.js";
 import { cn } from "../lib/utils.js";
 import { CalculationInspector } from "./calculation-inspector.js";
 import { CommunityConditionsPanel } from "./community-conditions-panel.js";
+import { ConditionLifecyclePanel } from "./condition-lifecycle-panel.js";
 import { LocalAccessibilityMap } from "./local-accessibility-map.js";
 import { Badge } from "./ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card.js";
@@ -37,11 +38,13 @@ export function LocalAccessibilityExplorer({
   currentConditions = [],
   profileKey,
   release,
+  submitConditionEvent,
   submitObstacle,
 }: {
   currentConditions?: CurrentCondition[];
   profileKey: string;
   release: LocalAccessibilityRelease;
+  submitConditionEvent?: (submission: ConditionEventSubmission) => Promise<PersistedConditionEventResult>;
   submitObstacle?: (submission: ObstacleSubmission) => Promise<PersistedObstacleResult>;
 }) {
   const [selectedSegmentId, setSelectedSegmentId] = useState(release.segments[0]?.id ?? "");
@@ -70,7 +73,7 @@ export function LocalAccessibilityExplorer({
       id: segment.id,
       geometry: segment.geometry,
       sufficient: getScoreStatus(scores[segment.id]!).sufficient,
-      currentCondition: displayedCurrentConditions.some((condition) => condition.projection.segmentId === segment.id),
+      currentCondition: displayedCurrentConditions.some((condition) => condition.projection.segmentId === segment.id && condition.projection.active),
     })),
     [displayedCurrentConditions, release.segments, scores],
   );
@@ -109,8 +112,24 @@ export function LocalAccessibilityExplorer({
         ...previous.filter((condition) => condition.projection.segmentId !== segmentId),
         {
           projection: result.projection,
-          observations: [...(existing?.observations ?? []), result.observation],
+          observations: [
+            ...(existing?.observations ?? []),
+            { ...result.observation, eventType: "obstacle", relatedObservationId: null },
+          ],
         },
+      ];
+    });
+  }
+
+  function reconcileConditionEvent(result: PersistedConditionEventResult) {
+    setReconciledConditions((previous) => {
+      const segmentId = result.projection.segmentId;
+      const existing = previous.find((condition) => condition.projection.segmentId === segmentId)
+        ?? currentConditions.find((condition) => condition.projection.segmentId === segmentId);
+      if (!existing) return previous;
+      return [
+        ...previous.filter((condition) => condition.projection.segmentId !== segmentId),
+        { projection: result.projection, observations: [...existing.observations, result.observation] },
       ];
     });
   }
@@ -151,7 +170,8 @@ export function LocalAccessibilityExplorer({
               {release.segments.map((segment) => {
                 const status = getScoreStatus(scores[segment.id]!);
                 const selected = selectedSegment.id === segment.id;
-                const currentCondition = displayedCurrentConditions.find((condition) => condition.projection.segmentId === segment.id);
+                const conditionHistory = displayedCurrentConditions.find((condition) => condition.projection.segmentId === segment.id);
+                const currentCondition = conditionHistory?.projection.active;
 
                 return (
                   <div key={segment.id} role="listitem">
@@ -172,7 +192,7 @@ export function LocalAccessibilityExplorer({
                         </span>
                         <span className="inline-flex items-center gap-1">
                           {currentCondition ? <CircleAlert aria-hidden="true" className="size-3.5 text-amber-700" /> : null}
-                          {currentCondition ? "Provisional condition" : "No condition recorded"}
+                          {currentCondition ? "Provisional condition" : conditionHistory ? "No active condition" : "No condition recorded"}
                         </span>
                       </span>
                     </button>
@@ -219,15 +239,15 @@ export function LocalAccessibilityExplorer({
               <h4 className="text-sm font-medium" id="community-condition-heading">Community condition</h4>
               {selectedCurrentCondition ? (
                 <div className="mt-3 rounded-lg border border-amber-700/30 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
-                  <Badge variant="outline">{selectedCurrentCondition.projection.label}</Badge>
-                  <p className="mt-3 text-amber-900 dark:text-amber-100">Active community evidence does not change the baseline score or release.</p>
-                  <ul className="mt-3 grid gap-2" aria-label="Active community evidence">
+                  <Badge variant="outline">{selectedCurrentCondition.projection.active ? selectedCurrentCondition.projection.label : "No active provisional condition"}</Badge>
+                  <p className="mt-3 text-amber-900 dark:text-amber-100">This provisional community evidence does not change the baseline score or release.</p>
+                  <ol className="mt-3 grid gap-2" aria-label="Community evidence timeline">
                     {selectedCurrentCondition.observations.map((observation) => (
                       <li key={observation.id}>
-                        <span className="font-medium capitalize">{observation.category.replace("-", " ")}</span>: {observation.description} (observed {observation.observedAt})
+                        <span className="font-medium capitalize">{observation.eventType === "obstacle" ? "Obstacle reported" : observation.eventType === "resolution" ? "Resolution reported" : "Reopening reported"}</span>: {observation.description} (observed {observation.observedAt})
                       </li>
                     ))}
-                  </ul>
+                  </ol>
                 </div>
               ) : (
                 <div className="mt-3 rounded-lg border p-4 text-sm text-muted-foreground">
@@ -241,6 +261,7 @@ export function LocalAccessibilityExplorer({
         <CalculationInspector profileKey={profileKey} release={release} score={selectedScore} segment={selectedSegment} />
       </section>
       {submitObstacle ? <CommunityConditionsPanel onSaved={reconcileObservation} submitObstacle={submitObstacle} /> : null}
+      {submitConditionEvent ? <ConditionLifecyclePanel conditions={displayedCurrentConditions} onSaved={reconcileConditionEvent} submitConditionEvent={submitConditionEvent} /> : null}
     </section>
   );
 }
