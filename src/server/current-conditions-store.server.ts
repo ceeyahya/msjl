@@ -3,6 +3,7 @@ import { Pool, type PoolClient } from "pg";
 
 import type {
   AssignedObservation,
+  CurrentCondition,
   CurrentConditionPolicy,
   CurrentConditionProjection,
   EligibleSegment,
@@ -168,4 +169,64 @@ export async function persistObstacle(
   } finally {
     client.release();
   }
+}
+
+export async function listCurrentConditions(releaseId: string): Promise<CurrentCondition[]> {
+  const rows = await getPool().query<{
+    segment_id: string;
+    condition: "reported-obstacle";
+    label: "Provisional community-derived condition";
+    policy_version: string;
+    local_influence_metres: number;
+    id: string;
+    category: CurrentCondition["observations"][number]["category"];
+    description: string;
+    observed_at: string;
+    recorded_at: string;
+  }>(
+    `SELECT
+      condition_projections.segment_id,
+      condition_projections.condition,
+      condition_projections.label,
+      condition_projections.policy_version,
+      condition_projections.local_influence_metres,
+      condition_observations.id,
+      condition_observations.category,
+      condition_observations.description,
+      condition_observations.observed_at::text AS observed_at,
+      to_char(condition_observations.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at
+    FROM condition_projections
+    JOIN condition_observations ON condition_observations.id = ANY(condition_projections.active_observation_ids)
+    WHERE condition_projections.release_id = $1
+    ORDER BY condition_projections.segment_id, condition_observations.recorded_at`,
+    [releaseId],
+  );
+  const conditions = new Map<string, CurrentCondition>();
+
+  for (const row of rows.rows) {
+    let currentCondition = conditions.get(row.segment_id);
+    if (!currentCondition) {
+      currentCondition = {
+        projection: {
+          condition: row.condition,
+          label: row.label,
+          policyVersion: row.policy_version,
+          baselineReleaseId: releaseId,
+          segmentId: row.segment_id,
+          localInfluenceMetres: row.local_influence_metres,
+        },
+        observations: [],
+      };
+      conditions.set(row.segment_id, currentCondition);
+    }
+    currentCondition.observations.push({
+      id: row.id,
+      category: row.category,
+      description: row.description,
+      observedAt: row.observed_at,
+      recordedAt: row.recorded_at,
+    });
+  }
+
+  return [...conditions.values()];
 }

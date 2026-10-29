@@ -69,6 +69,19 @@ export type PersistedObstacleResult =
   | { observation: PersistedObstacleObservation; assignment: AssignedObservation; projection: CurrentConditionProjection }
   | { observation: PersistedObstacleObservation; assignment: UnmatchedObservation };
 
+export interface CurrentCondition {
+  projection: CurrentConditionProjection;
+  observations: CurrentConditionObservation[];
+}
+
+export interface CurrentConditionObservation {
+  id: string;
+  category: ObstacleCategory;
+  description: string;
+  observedAt: string;
+  recordedAt: string;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 

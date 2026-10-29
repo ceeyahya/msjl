@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
-import { validateObstacleSubmission } from "./current-conditions.js";
+import { validateObstacleSubmission, type CurrentCondition } from "./current-conditions.js";
 
 const policy = {
   assignmentThresholdMetres: 15,
@@ -24,5 +24,22 @@ export const submitObstacleObservation = createServerFn({ method: "POST" })
       });
     } catch {
       throw new Error("Community Conditions is temporarily unavailable. Try again later.");
+    }
+  });
+
+export const getCurrentConditions = createServerFn({ method: "GET" })
+  .handler(async (): Promise<CurrentCondition[]> => {
+    if (!process.env.DATABASE_URL) return [];
+
+    try {
+      const [{ sampleRelease }, { listCurrentConditions }] = await Promise.all([
+        import("./sample-release.js"),
+        import("./server/current-conditions-store.server.js"),
+      ]);
+
+      return await listCurrentConditions(sampleRelease.manifest.releaseId);
+    } catch {
+      // Community conditions are supplemental; an unavailable database must not hide the baseline release.
+      return [];
     }
   });

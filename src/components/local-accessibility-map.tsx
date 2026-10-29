@@ -8,6 +8,7 @@ interface MapSegment {
   id: string;
   geometry: ReleaseSegment["geometry"];
   sufficient: boolean;
+  currentCondition: boolean;
 }
 
 const basemapStyle: StyleSpecification = {
@@ -32,6 +33,7 @@ function segmentFeatures(segments: MapSegment[], selectedSegmentId: string): Fea
         id: segment.id,
         selected: segment.id === selectedSegmentId,
         sufficient: segment.sufficient,
+        currentCondition: segment.currentCondition,
       },
       geometry: segment.geometry,
     })),
@@ -64,6 +66,7 @@ export function LocalAccessibilityMap({
   const map = useRef<MapLibreMap | null>(null);
   const onSelectSegmentRef = useRef(onSelectSegment);
   const selectedSegmentIdRef = useRef(selectedSegmentId);
+  const segmentsRef = useRef(segments);
 
   useEffect(() => {
     onSelectSegmentRef.current = onSelectSegment;
@@ -72,6 +75,10 @@ export function LocalAccessibilityMap({
   useEffect(() => {
     selectedSegmentIdRef.current = selectedSegmentId;
   }, [selectedSegmentId]);
+
+  useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
 
   useEffect(() => {
     if (!container.current || map.current || !("WebGLRenderingContext" in window)) return;
@@ -83,7 +90,7 @@ export function LocalAccessibilityMap({
 
       const instance = new maplibregl.Map({
         attributionControl: { compact: false },
-        center: segments[0]?.geometry.coordinates[0] ?? [5.3698, 43.2951],
+        center: segmentsRef.current[0]?.geometry.coordinates[0] ?? [5.3698, 43.2951],
         container: container.current,
         style: basemapStyle,
         zoom: 15,
@@ -96,7 +103,7 @@ export function LocalAccessibilityMap({
       instance.on("load", () => {
         if (cancelled) return;
 
-        instance.addSource("release-segments", { type: "geojson", data: segmentFeatures(segments, selectedSegmentIdRef.current) });
+        instance.addSource("release-segments", { type: "geojson", data: segmentFeatures(segmentsRef.current, selectedSegmentIdRef.current) });
         instance.addLayer({
           id: "release-segments-scored",
           type: "line",
@@ -119,7 +126,35 @@ export function LocalAccessibilityMap({
           },
         });
 
-        for (const layerId of ["release-segments-scored", "release-segments-insufficient"]) {
+        instance.addLayer({
+          id: "release-segments-current-condition",
+          type: "line",
+          source: "release-segments",
+          filter: ["get", "currentCondition"],
+          paint: {
+            "line-color": "#b45309",
+            "line-dasharray": [1, 1],
+            "line-width": ["case", ["get", "selected"], 12, 9],
+          },
+        });
+        instance.addLayer({
+          id: "release-segments-current-condition-label",
+          type: "symbol",
+          source: "release-segments",
+          filter: ["get", "currentCondition"],
+          layout: {
+            "symbol-placement": "line",
+            "text-field": "Provisional condition",
+            "text-size": 12,
+          },
+          paint: {
+            "text-color": "#78350f",
+            "text-halo-color": "#fffbeb",
+            "text-halo-width": 2,
+          },
+        });
+
+        for (const layerId of ["release-segments-scored", "release-segments-insufficient", "release-segments-current-condition", "release-segments-current-condition-label"]) {
           instance.on("click", layerId, (event) => {
             const segmentId = event.features?.[0]?.properties?.id;
             if (typeof segmentId === "string") onSelectSegmentRef.current(segmentId);
@@ -128,7 +163,7 @@ export function LocalAccessibilityMap({
           instance.on("mouseleave", layerId, () => { instance.getCanvas().style.cursor = ""; });
         }
 
-        fitToSegments(instance, segments, maplibregl);
+        fitToSegments(instance, segmentsRef.current, maplibregl);
       });
     });
 
@@ -137,7 +172,7 @@ export function LocalAccessibilityMap({
       map.current?.remove();
       map.current = null;
     };
-  }, [segments]);
+  }, []);
 
   useEffect(() => {
     const source = map.current?.getSource("release-segments") as GeoJSONSource | undefined;

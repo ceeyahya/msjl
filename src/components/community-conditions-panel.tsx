@@ -25,8 +25,10 @@ function failureMessage(error: unknown): string {
 }
 
 export function CommunityConditionsPanel({
+  onSaved,
   submitObstacle,
 }: {
+  onSaved?: (result: PersistedObstacleResult) => void;
   submitObstacle: (submission: ObstacleSubmission) => Promise<PersistedObstacleResult>;
 }) {
   const [state, setState] = useState<SubmissionState>({ status: "idle" });
@@ -46,6 +48,7 @@ export function CommunityConditionsPanel({
       setState({ status: "pending", submission });
       const result = await submitObstacle(submission);
       setState({ status: "saved", result });
+      onSaved?.(result);
       formElement.reset();
     } catch (error) {
       setState({ status: "failed", message: failureMessage(error) });

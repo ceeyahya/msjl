@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { closeCurrentConditionsStore, persistObstacle } from "../src/server/current-conditions-store.server.js";
+import { closeCurrentConditionsStore, listCurrentConditions, persistObstacle } from "../src/server/current-conditions-store.server.js";
 
 const connectionString = process.env.DATABASE_URL;
 const describePostgis = connectionString ? describe : describe.skip;
@@ -63,6 +63,31 @@ describePostgis("PostGIS current-condition persistence", () => {
       condition: "reported-obstacle",
       local_influence_metres: 0,
     }]);
+
+    const secondResult = await persistObstacle({
+      category: "surface-hazard",
+      description: "Loose paving creates a trip hazard.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    }, segments, policy);
+    expect(secondResult.assignment.status).toBe("assigned");
+
+    const conditions = await listCurrentConditions(policy.baselineReleaseId);
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.projection).toEqual({
+      condition: "reported-obstacle",
+      label: "Provisional community-derived condition",
+      policyVersion: "community-condition-v1",
+      baselineReleaseId: policy.baselineReleaseId,
+      segmentId: "nearest",
+      localInfluenceMetres: 0,
+    });
+    expect(conditions[0]!.observations).toHaveLength(2);
+    expect(conditions[0]!.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: result.observation.id }),
+      expect.objectContaining({ id: secondResult.observation.id }),
+    ]));
   });
 
   it("persists an unmatched observation without a projection", async () => {
@@ -93,6 +118,7 @@ describePostgis("PostGIS current-condition persistence", () => {
       reason: "No eligible segment is within 15 m.",
       projections: "0",
     }]);
+    await expect(listCurrentConditions(policy.baselineReleaseId)).resolves.toEqual([]);
   });
 
   it("rejects mutation of a persisted obstacle observation", async () => {

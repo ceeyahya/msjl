@@ -1,10 +1,12 @@
-import { CircleCheck, CircleSlash } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleSlash } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import type { LocalAccessibilityRelease } from "../release.js";
+import type { CurrentCondition, ObstacleSubmission, PersistedObstacleResult } from "../current-conditions.js";
 import { scoreSegments, type SegmentScore } from "../scoring.js";
 import { cn } from "../lib/utils.js";
 import { CalculationInspector } from "./calculation-inspector.js";
+import { CommunityConditionsPanel } from "./community-conditions-panel.js";
 import { LocalAccessibilityMap } from "./local-accessibility-map.js";
 import { Badge } from "./ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card.js";
@@ -32,13 +34,18 @@ function getScoreStatus(score: SegmentScore): ScoreStatus {
 }
 
 export function LocalAccessibilityExplorer({
+  currentConditions = [],
   profileKey,
   release,
+  submitObstacle,
 }: {
+  currentConditions?: CurrentCondition[];
   profileKey: string;
   release: LocalAccessibilityRelease;
+  submitObstacle?: (submission: ObstacleSubmission) => Promise<PersistedObstacleResult>;
 }) {
   const [selectedSegmentId, setSelectedSegmentId] = useState(release.segments[0]?.id ?? "");
+  const [reconciledConditions, setReconciledConditions] = useState<CurrentCondition[]>([]);
   const selectedDetail = useRef<HTMLElement>(null);
 
   if (!release.config.profiles[profileKey]) {
@@ -49,13 +56,23 @@ export function LocalAccessibilityExplorer({
     () => scoreSegments(release.segments, release.config, profileKey).segments,
     [profileKey, release],
   );
+  const displayedCurrentConditions = useMemo(
+    () => [
+      ...currentConditions.filter((condition) => !reconciledConditions.some(
+        (reconciled) => reconciled.projection.segmentId === condition.projection.segmentId,
+      )),
+      ...reconciledConditions,
+    ],
+    [currentConditions, reconciledConditions],
+  );
   const mapSegments = useMemo(
     () => release.segments.map((segment) => ({
       id: segment.id,
       geometry: segment.geometry,
       sufficient: getScoreStatus(scores[segment.id]!).sufficient,
+      currentCondition: displayedCurrentConditions.some((condition) => condition.projection.segmentId === segment.id),
     })),
-    [release.segments, scores],
+    [displayedCurrentConditions, release.segments, scores],
   );
 
   if (release.segments.length === 0) {
@@ -74,10 +91,28 @@ export function LocalAccessibilityExplorer({
   const selectedSegment = release.segments.find((segment) => segment.id === selectedSegmentId) ?? release.segments[0]!;
   const selectedScore = scores[selectedSegment.id]!;
   const selectedStatus = getScoreStatus(selectedScore);
+  const selectedCurrentCondition = displayedCurrentConditions.find((condition) => condition.projection.segmentId === selectedSegment.id);
 
   function selectSegment(segmentId: string) {
     setSelectedSegmentId(segmentId);
     selectedDetail.current?.focus();
+  }
+
+  function reconcileObservation(result: PersistedObstacleResult) {
+    if (!("projection" in result)) return;
+
+    setReconciledConditions((previous) => {
+      const segmentId = result.projection.segmentId;
+      const existing = previous.find((condition) => condition.projection.segmentId === segmentId)
+        ?? currentConditions.find((condition) => condition.projection.segmentId === segmentId);
+      return [
+        ...previous.filter((condition) => condition.projection.segmentId !== segmentId),
+        {
+          projection: result.projection,
+          observations: [...(existing?.observations ?? []), result.observation],
+        },
+      ];
+    });
   }
 
   return (
@@ -101,6 +136,7 @@ export function LocalAccessibilityExplorer({
             <div aria-label="Map legend" className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="h-0.5 w-5 bg-primary" />Valid score</span>
               <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="h-0.5 w-5 border-t-2 border-dashed border-muted-foreground" />Insufficient evidence</span>
+              <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="h-1 w-5 border-t-2 border-dashed border-amber-700" />Provisional community condition</span>
             </div>
           </CardContent>
         </Card>
@@ -115,6 +151,7 @@ export function LocalAccessibilityExplorer({
               {release.segments.map((segment) => {
                 const status = getScoreStatus(scores[segment.id]!);
                 const selected = selectedSegment.id === segment.id;
+                const currentCondition = displayedCurrentConditions.find((condition) => condition.projection.segmentId === segment.id);
 
                 return (
                   <div key={segment.id} role="listitem">
@@ -128,9 +165,15 @@ export function LocalAccessibilityExplorer({
                       type="button"
                     >
                       <span className="font-medium">{segment.id}</span>
-                      <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                        {status.sufficient ? <CircleCheck aria-hidden="true" className="size-3.5" /> : <CircleSlash aria-hidden="true" className="size-3.5" />}
-                        {status.label}
+                      <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          {status.sufficient ? <CircleCheck aria-hidden="true" className="size-3.5" /> : <CircleSlash aria-hidden="true" className="size-3.5" />}
+                          {status.label}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          {currentCondition ? <CircleAlert aria-hidden="true" className="size-3.5 text-amber-700" /> : null}
+                          {currentCondition ? "Provisional condition" : "No condition recorded"}
+                        </span>
                       </span>
                     </button>
                   </div>
@@ -172,10 +215,32 @@ export function LocalAccessibilityExplorer({
                 <dd className="mt-1 font-medium">{selectedSegment.sourceWayIds.join(", ")}</dd>
               </div>
             </dl>
+            <section aria-labelledby="community-condition-heading" className="sm:col-span-2">
+              <h4 className="text-sm font-medium" id="community-condition-heading">Community condition</h4>
+              {selectedCurrentCondition ? (
+                <div className="mt-3 rounded-lg border border-amber-700/30 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
+                  <Badge variant="outline">{selectedCurrentCondition.projection.label}</Badge>
+                  <p className="mt-3 text-amber-900 dark:text-amber-100">Active community evidence does not change the baseline score or release.</p>
+                  <ul className="mt-3 grid gap-2" aria-label="Active community evidence">
+                    {selectedCurrentCondition.observations.map((observation) => (
+                      <li key={observation.id}>
+                        <span className="font-medium capitalize">{observation.category.replace("-", " ")}</span>: {observation.description} (observed {observation.observedAt})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-lg border p-4 text-sm text-muted-foreground">
+                  <p>No active community condition is recorded for this segment.</p>
+                  <p className="mt-1">This does not confirm that no obstacle is present.</p>
+                </div>
+              )}
+            </section>
           </CardContent>
         </Card>
         <CalculationInspector profileKey={profileKey} release={release} score={selectedScore} segment={selectedSegment} />
       </section>
+      {submitObstacle ? <CommunityConditionsPanel onSaved={reconcileObservation} submitObstacle={submitObstacle} /> : null}
     </section>
   );
 }

@@ -1,12 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 
 import { Badge } from "../components/ui/badge.js";
 import { LocalAccessibilityExplorer } from "../components/local-accessibility-explorer.js";
+import { getCurrentConditions, submitObstacleObservation } from "../current-conditions-api.js";
+import type { ObstacleSubmission } from "../current-conditions.js";
 import { sampleRelease } from "../sample-release.js";
 
-export const Route = createFileRoute("/")({ component: LocalAccessibility });
+export const Route = createFileRoute("/")({
+  component: LocalAccessibility,
+  loader: () => {
+    if (typeof window === "undefined" && !process.env.DATABASE_URL) return [];
+    return getCurrentConditions();
+  },
+});
 
 function LocalAccessibility() {
+  const currentConditions = Route.useLoaderData();
+  const submitObstacle = useServerFn(submitObstacleObservation);
+
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
       <section className="max-w-3xl">
@@ -17,7 +29,12 @@ function LocalAccessibility() {
           configuration, source, and coverage.
         </p>
       </section>
-      <LocalAccessibilityExplorer profileKey="wheelchair" release={sampleRelease} />
+      <LocalAccessibilityExplorer
+        currentConditions={currentConditions}
+        profileKey="wheelchair"
+        release={sampleRelease}
+        submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
+      />
     </main>
   );
 }

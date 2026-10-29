@@ -13,7 +13,7 @@
     "migrate-current-conditions": "tsx scripts/migrate-current-conditions.ts",
     "preview": "vite preview",
     "test": "vitest run --config vitest.config.ts",
-    "test:current-conditions:integration": "npm run migrate-current-conditions && vitest run --config vitest.config.ts tests/current-conditions-postgis.test.ts",
+    "test:current-conditions:integration": "npm run migrate-current-conditions && node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/current-conditions-postgis.test.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
