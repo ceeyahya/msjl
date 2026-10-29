@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 .output/
+.env
 
 # Local-only agent documentation
 AGENTS.md

@@ -23,12 +23,12 @@ describe("analysis modes", () => {
 
   it.each([
     ["/neighborhood-context", "Neighborhood Context", "No Neighborhood Context release is available yet"],
-    ["/community-conditions", "Community Conditions", "No Community Conditions release is available yet"],
-  ])("keeps %s separate from the Local Accessibility baseline", async (pathname, heading, unavailable) => {
+    ["/community-conditions", "Community Conditions", "Report an obstacle"],
+  ])("keeps %s separate from the Local Accessibility baseline", async (pathname, heading, modeContent) => {
     const page = await renderRoute(pathname);
 
     expect(page).toContain(heading);
-    expect(page).toContain(unavailable);
+    expect(page).toContain(modeContent);
     expect(page).not.toContain("Explore release-backed segments");
   });
 });
