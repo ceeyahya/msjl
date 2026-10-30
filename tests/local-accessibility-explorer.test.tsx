@@ -150,4 +150,43 @@ describe("LocalAccessibilityExplorer", () => {
     expect(within(selected).getByText("Score 78%")).toBeTruthy();
     expect(within(selected).getByText("Temporary construction barrier narrows the pavement.", { exact: false })).toBeTruthy();
   });
+
+  it("retains a confirmed local change until an incoming snapshot includes it", async () => {
+    const user = userEvent.setup();
+    const resolution = {
+      observation: {
+        id: "2e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+        category: "blocked-path" as const,
+        description: "The barrier is no longer present.",
+        eventType: "resolution" as const,
+        observedAt: "2026-10-30",
+        recordedAt: "2026-10-30T12:00:00.000Z",
+        relatedObservationId: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+      },
+      projection: { ...currentConditions[0]!.projection, active: false },
+    };
+    const { rerender } = render(
+      <LocalAccessibilityExplorer
+        currentConditions={currentConditions}
+        profileKey="wheelchair"
+        release={sampleRelease}
+        submitConditionEvent={async () => resolution}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("What did you observe?"), "The barrier is no longer present.");
+    await user.type(screen.getByLabelText("Observed on"), "2026-10-30");
+    await user.click(screen.getByRole("button", { name: "Save change observation" }));
+    rerender(
+      <LocalAccessibilityExplorer
+        currentConditions={[...currentConditions]}
+        profileKey="wheelchair"
+        release={sampleRelease}
+        submitConditionEvent={async () => resolution}
+      />,
+    );
+
+    const explorer = screen.getByRole("list", { name: "Segment explorer" });
+    expect(within(explorer).getByRole("button", { name: /marseille-sample-001.*no active condition/i })).toBeTruthy();
+  });
 });

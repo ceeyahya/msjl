@@ -1,5 +1,5 @@
 import { CircleAlert, CircleCheck, CircleSlash } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { LocalAccessibilityRelease } from "../release.js";
 import type { ConditionEventSubmission, CurrentCondition, ObstacleSubmission, PersistedConditionEventResult, PersistedObstacleResult } from "../current-conditions.js";
@@ -18,6 +18,8 @@ interface ScoreStatus {
   sufficient: boolean;
 }
 
+const emptyCurrentConditions: CurrentCondition[] = [];
+
 function getScoreStatus(score: SegmentScore): ScoreStatus {
   if (!score.profile.sufficient || score.profile.score === undefined) {
     return {
@@ -35,7 +37,7 @@ function getScoreStatus(score: SegmentScore): ScoreStatus {
 }
 
 export function LocalAccessibilityExplorer({
-  currentConditions = [],
+  currentConditions = emptyCurrentConditions,
   profileKey,
   release,
   submitConditionEvent,
@@ -50,6 +52,15 @@ export function LocalAccessibilityExplorer({
   const [selectedSegmentId, setSelectedSegmentId] = useState(release.segments[0]?.id ?? "");
   const [reconciledConditions, setReconciledConditions] = useState<CurrentCondition[]>([]);
   const selectedDetail = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    setReconciledConditions((previous) => previous.filter((reconciled) => {
+      const persisted = currentConditions.find((condition) => condition.projection.segmentId === reconciled.projection.segmentId);
+      return !persisted || reconciled.observations.some((observation) => !persisted.observations.some(
+        (persistedObservation) => persistedObservation.id === observation.id,
+      ));
+    }));
+  }, [currentConditions]);
 
   if (!release.config.profiles[profileKey]) {
     throw new Error(`The sample release does not define the ${profileKey} profile.`);

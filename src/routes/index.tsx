@@ -5,18 +5,25 @@ import { Badge } from "../components/ui/badge.js";
 import { LocalAccessibilityExplorer } from "../components/local-accessibility-explorer.js";
 import { getCurrentConditions, submitConditionEvent, submitObstacleObservation } from "../current-conditions-api.js";
 import type { ConditionEventSubmission, ObstacleSubmission } from "../current-conditions.js";
+import { CurrentConditionsLiveStatus, useCurrentConditionsSync } from "../current-conditions-sync.js";
 import { sampleRelease } from "../sample-release.js";
 
 export const Route = createFileRoute("/")({
   component: LocalAccessibility,
   loader: () => {
-    if (typeof window === "undefined" && !process.env.DATABASE_URL) return [];
+    if (typeof window === "undefined" && !process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
     return getCurrentConditions();
   },
 });
 
 function LocalAccessibility() {
   const currentConditions = Route.useLoaderData();
+  const refreshConditions = useServerFn(getCurrentConditions);
+  const { snapshot, status } = useCurrentConditionsSync(
+    currentConditions,
+    sampleRelease.manifest.releaseId,
+    () => refreshConditions(),
+  );
   const submitObstacle = useServerFn(submitObstacleObservation);
   const submitEvent = useServerFn(submitConditionEvent);
 
@@ -31,12 +38,13 @@ function LocalAccessibility() {
         </p>
       </section>
       <LocalAccessibilityExplorer
-        currentConditions={currentConditions}
+        currentConditions={snapshot.conditions}
         profileKey="wheelchair"
         release={sampleRelease}
         submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
         submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
       />
+      <CurrentConditionsLiveStatus status={status} />
     </main>
   );
 }

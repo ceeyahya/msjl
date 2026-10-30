@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
-import { validateConditionEventSubmission, validateObstacleSubmission, type CurrentCondition } from "./current-conditions.js";
+import { validateConditionEventSubmission, validateObstacleSubmission, type CurrentConditionsSnapshot } from "./current-conditions.js";
 
 const policy = {
   assignmentThresholdMetres: 15,
@@ -47,18 +47,18 @@ export const submitConditionEvent = createServerFn({ method: "POST" })
   });
 
 export const getCurrentConditions = createServerFn({ method: "GET" })
-  .handler(async (): Promise<CurrentCondition[]> => {
-    if (!process.env.DATABASE_URL) return [];
+  .handler(async (): Promise<CurrentConditionsSnapshot> => {
+    if (!process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
 
     try {
-      const [{ sampleRelease }, { listCurrentConditions }] = await Promise.all([
+      const [{ sampleRelease }, { listCurrentConditionsSnapshot }] = await Promise.all([
         import("./sample-release.js"),
         import("./server/current-conditions-store.server.js"),
       ]);
 
-      return await listCurrentConditions(sampleRelease.manifest.releaseId);
+      return await listCurrentConditionsSnapshot(sampleRelease.manifest.releaseId);
     } catch {
       // Community conditions are supplemental; an unavailable database must not hide the baseline release.
-      return [];
+      return { conditions: [], unmatchedObservations: [] };
     }
   });

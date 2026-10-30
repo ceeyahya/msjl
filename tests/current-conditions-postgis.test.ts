@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { closeCurrentConditionsStore, listCurrentConditions, persistConditionEvent, persistObstacle } from "../src/server/current-conditions-store.server.js";
+import { closeCurrentConditionsStore, listCurrentConditions, listCurrentConditionsSnapshot, persistConditionEvent, persistObstacle } from "../src/server/current-conditions-store.server.js";
 
 const connectionString = process.env.DATABASE_URL;
 const describePostgis = connectionString ? describe : describe.skip;
@@ -91,6 +91,29 @@ describePostgis("PostGIS current-condition persistence", () => {
     ]));
   });
 
+  it("publishes only after an assigned observation is committed", async () => {
+    const policy = policyFor(`current-conditions-publish-${randomUUID()}`);
+    const published: string[] = [];
+    const publisher = {
+      publish: async ({ baselineReleaseId }: { baselineReleaseId: string }) => {
+        const persisted = await listCurrentConditions(baselineReleaseId);
+        expect(persisted).toHaveLength(1);
+        expect(persisted[0]!.projection).toMatchObject({ active: true, segmentId: "nearest" });
+        published.push(baselineReleaseId);
+      },
+    };
+
+    await persistObstacle({
+      category: "blocked-path",
+      description: "Temporary construction barrier narrows the pavement.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    }, segments, policy, publisher);
+
+    expect(published).toEqual([policy.baselineReleaseId]);
+  });
+
   it("persists an unmatched observation without a projection", async () => {
     const policy = policyFor(`current-conditions-unmatched-${randomUUID()}`);
     const result = await persistObstacle({
@@ -120,6 +143,13 @@ describePostgis("PostGIS current-condition persistence", () => {
       projections: "0",
     }]);
     await expect(listCurrentConditions(policy.baselineReleaseId)).resolves.toEqual([]);
+    await expect(listCurrentConditionsSnapshot(policy.baselineReleaseId)).resolves.toMatchObject({
+      conditions: [],
+      unmatchedObservations: [{
+        description: "A step blocks this entrance.",
+        assignment: { status: "unmatched" },
+      }],
+    });
   });
 
   it("derives active, resolved, and reopened conditions from immutable event history", async () => {

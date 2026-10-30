@@ -11,10 +11,22 @@ import type {
   ObstacleSubmission,
   PersistedConditionEventResult,
   PersistedObstacleResult,
+  CurrentConditionsSnapshot,
+  UnmatchedConditionObservation,
   UnmatchedObservation,
 } from "../current-conditions.js";
+import { currentConditionsChangePublisher } from "../current-conditions-change-feed.server.js";
+import type { CurrentConditionsChangePublisher } from "../current-conditions-change-feed.js";
 
 let pool: Pool | undefined;
+
+async function publishPersistedChange(publisher: CurrentConditionsChangePublisher, baselineReleaseId: string): Promise<void> {
+  try {
+    await publisher.publish({ baselineReleaseId });
+  } catch {
+    // A committed write remains authoritative even if the supplemental live feed is unavailable.
+  }
+}
 
 export async function closeCurrentConditionsStore(): Promise<void> {
   if (!pool) return;
@@ -126,6 +138,7 @@ export async function persistObstacle(
   submission: ObstacleSubmission,
   segments: EligibleSegment[],
   policy: CurrentConditionPolicy,
+  publisher: CurrentConditionsChangePublisher = currentConditionsChangePublisher,
 ): Promise<PersistedObstacleResult> {
   const client = await getPool().connect();
   const observationId = randomUUID();
@@ -183,6 +196,7 @@ export async function persistObstacle(
         [observationId, policy.baselineReleaseId, reason, policy.eligibilityRuleVersion],
       );
       await client.query("COMMIT");
+      await publishPersistedChange(publisher, policy.baselineReleaseId);
 
       return {
         observation: { id: observationId, ...submission, recordedAt },
@@ -206,6 +220,7 @@ export async function persistObstacle(
     );
     const projection = await refreshProjection(client, policy.baselineReleaseId, candidate.segment_id, policy, recordedAt);
     await client.query("COMMIT");
+    await publishPersistedChange(publisher, policy.baselineReleaseId);
 
     return {
       observation: { id: observationId, ...submission, recordedAt },
@@ -223,6 +238,7 @@ export async function persistObstacle(
 export async function persistConditionEvent(
   submission: ConditionEventSubmission,
   policy: CurrentConditionPolicy,
+  publisher: CurrentConditionsChangePublisher = currentConditionsChangePublisher,
 ): Promise<PersistedConditionEventResult> {
   const client = await getPool().connect();
   const observationId = randomUUID();
@@ -278,6 +294,7 @@ export async function persistConditionEvent(
     );
     const projection = await refreshProjection(client, policy.baselineReleaseId, obstacle.segment_id, policy, recordedAt);
     await client.query("COMMIT");
+    await publishPersistedChange(publisher, policy.baselineReleaseId);
 
     return {
       observation: {
@@ -373,4 +390,58 @@ export async function listCurrentConditions(releaseId: string): Promise<CurrentC
   }
 
   return [...conditions.values()];
+}
+
+export async function listCurrentConditionsSnapshot(releaseId: string): Promise<CurrentConditionsSnapshot> {
+  const [conditions, unmatched] = await Promise.all([
+    listCurrentConditions(releaseId),
+    getPool().query<{
+      id: string;
+      category: UnmatchedConditionObservation["category"];
+      description: string;
+      latitude: string;
+      longitude: string;
+      observed_at: string;
+      recorded_at: string;
+      reason: string;
+      eligibility_rule_version: string;
+    }>(
+      `SELECT
+        condition_observations.id,
+        condition_observations.category,
+        condition_observations.description,
+        ST_Y(condition_observations.location::geometry)::text AS latitude,
+        ST_X(condition_observations.location::geometry)::text AS longitude,
+        condition_observations.observed_at::text AS observed_at,
+        to_char(condition_observations.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at,
+        observation_assignments.reason,
+        observation_assignments.eligibility_rule_version
+      FROM condition_observations
+      JOIN observation_assignments ON observation_assignments.observation_id = condition_observations.id
+      WHERE condition_observations.release_id = $1
+        AND condition_observations.event_type = 'obstacle'
+        AND observation_assignments.assignment_status = 'unmatched'
+      ORDER BY condition_observations.recorded_at, condition_observations.id`,
+      [releaseId],
+    ),
+  ]);
+
+  return {
+    conditions,
+    unmatchedObservations: unmatched.rows.map((observation) => ({
+      id: observation.id,
+      category: observation.category,
+      description: observation.description,
+      latitude: Number(observation.latitude),
+      longitude: Number(observation.longitude),
+      observedAt: observation.observed_at,
+      recordedAt: observation.recorded_at,
+      assignment: {
+        status: "unmatched",
+        reason: observation.reason,
+        baselineReleaseId: releaseId,
+        eligibilityRuleVersion: observation.eligibility_rule_version,
+      },
+    })),
+  };
 }

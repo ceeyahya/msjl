@@ -28,6 +28,9 @@ vi.mock("maplibre-gl", () => ({
 
 import { LocalAccessibilityMap } from "../src/components/local-accessibility-map.js";
 import { LocalAccessibilityExplorer } from "../src/components/local-accessibility-explorer.js";
+import type { CurrentConditionsChangeFeed } from "../src/current-conditions-sync.js";
+import { useCurrentConditionsSync } from "../src/current-conditions-sync.js";
+import type { CurrentConditionsSnapshot } from "../src/current-conditions.js";
 import { sampleRelease } from "../src/sample-release.js";
 
 afterEach(() => {
@@ -43,6 +46,107 @@ afterEach(() => {
 });
 
 describe("LocalAccessibilityMap", () => {
+  it("updates the existing map source after a remote condition change", async () => {
+    Object.defineProperty(window, "WebGLRenderingContext", { configurable: true, value: class {} });
+    let onChange: (() => void) | undefined;
+    const feed: CurrentConditionsChangeFeed = {
+      subscribe: (_releaseId, listener, onStatus) => {
+        onChange = listener;
+        return () => undefined;
+      },
+    };
+    let persistedSnapshot: CurrentConditionsSnapshot = {
+      unmatchedObservations: [],
+      conditions: [{
+        projection: {
+          active: true,
+          condition: "reported-obstacle",
+          label: "Provisional community-derived condition",
+          policyVersion: "community-condition-v1",
+          baselineReleaseId: sampleRelease.manifest.releaseId,
+          segmentId: "marseille-sample-001",
+          localInfluenceMetres: 0,
+        },
+        observations: [{
+          id: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+          category: "blocked-path",
+          description: "Temporary construction barrier narrows the pavement.",
+          eventType: "obstacle",
+          observedAt: "2026-10-29",
+          recordedAt: "2026-10-29T12:00:00.000Z",
+          relatedObservationId: null,
+        }],
+      }],
+    };
+    function SynchronisedExplorer() {
+      const { snapshot } = useCurrentConditionsSync(
+        { conditions: [], unmatchedObservations: [] },
+        sampleRelease.manifest.releaseId,
+        async () => persistedSnapshot,
+        feed,
+      );
+      return <LocalAccessibilityExplorer currentConditions={snapshot.conditions} profileKey="wheelchair" release={sampleRelease} />;
+    }
+
+    render(<SynchronisedExplorer />);
+
+    await waitFor(() => expect(map.addSource).toHaveBeenCalledWith("release-segments", expect.any(Object)));
+    source.setData.mockClear();
+    onChange?.();
+
+    await waitFor(() => expect(source.setData).toHaveBeenCalled());
+    expect(Map).toHaveBeenCalledTimes(1);
+    const data = source.setData.mock.calls.at(-1)?.[0] as { features: Array<{ properties: { id: string; currentCondition: boolean } }> };
+    expect(data.features.find((feature) => feature.properties.id === "marseille-sample-001")?.properties.currentCondition).toBe(true);
+
+    persistedSnapshot = {
+      ...persistedSnapshot,
+      conditions: [{
+        ...persistedSnapshot.conditions[0]!,
+        projection: { ...persistedSnapshot.conditions[0]!.projection, active: false },
+        observations: [...persistedSnapshot.conditions[0]!.observations, {
+          id: "2e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+          category: "blocked-path",
+          description: "The barrier is no longer present.",
+          eventType: "resolution",
+          observedAt: "2026-10-30",
+          recordedAt: "2026-10-30T12:00:00.000Z",
+          relatedObservationId: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+        }],
+      }],
+    };
+    source.setData.mockClear();
+    onChange?.();
+
+    await waitFor(() => expect(source.setData).toHaveBeenCalled());
+    const resolvedData = source.setData.mock.calls.at(-1)?.[0] as { features: Array<{ properties: { id: string; currentCondition: boolean } }> };
+    expect(resolvedData.features.find((feature) => feature.properties.id === "marseille-sample-001")?.properties.currentCondition).toBe(false);
+
+    persistedSnapshot = {
+      ...persistedSnapshot,
+      conditions: [{
+        ...persistedSnapshot.conditions[0]!,
+        projection: { ...persistedSnapshot.conditions[0]!.projection, active: true },
+        observations: [...persistedSnapshot.conditions[0]!.observations, {
+          id: "3e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+          category: "blocked-path",
+          description: "The barrier is blocking the pavement again.",
+          eventType: "reopening",
+          observedAt: "2026-10-31",
+          recordedAt: "2026-10-31T12:00:00.000Z",
+          relatedObservationId: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+        }],
+      }],
+    };
+    source.setData.mockClear();
+    onChange?.();
+
+    await waitFor(() => expect(source.setData).toHaveBeenCalled());
+    const reopenedData = source.setData.mock.calls.at(-1)?.[0] as { features: Array<{ properties: { id: string; currentCondition: boolean } }> };
+    expect(reopenedData.features.find((feature) => feature.properties.id === "marseille-sample-001")?.properties.currentCondition).toBe(true);
+    expect(Map).toHaveBeenCalledTimes(1);
+  });
+
   it("updates the existing map source when a provisional condition changes", async () => {
     Object.defineProperty(window, "WebGLRenderingContext", { configurable: true, value: class {} });
     const segments = [{

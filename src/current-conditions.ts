@@ -75,6 +75,15 @@ export interface CurrentCondition {
   observations: CurrentConditionObservation[];
 }
 
+export interface UnmatchedConditionObservation extends PersistedObstacleObservation {
+  assignment: UnmatchedObservation;
+}
+
+export interface CurrentConditionsSnapshot {
+  conditions: CurrentCondition[];
+  unmatchedObservations: UnmatchedConditionObservation[];
+}
+
 export interface CurrentConditionObservation {
   id: string;
   category: ObstacleCategory;
