@@ -11,3 +11,8 @@ CONTEXT-MAP.md
 docs/handoffs/
 docs/agents/
 docs/adr/
+
+# Reproducible but potentially large citywide source snapshots and releases
+data/citywide/*.json
+!data/citywide/config.json
+releases/marseille-*/

@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 
 import { Badge } from "../components/ui/badge.js";
 import { LocalAccessibilityExplorer } from "../components/local-accessibility-explorer.js";
+import { PublishedCitywideAccessibilityExplorer } from "../components/citywide-local-accessibility-explorer.js";
 import { getCurrentConditions, submitConditionEvent, submitObstacleObservation } from "../current-conditions-api.js";
 import type { ConditionEventSubmission, ObstacleSubmission } from "../current-conditions.js";
 import { CurrentConditionsLiveStatus, useCurrentConditionsSync } from "../current-conditions-sync.js";
@@ -12,7 +13,7 @@ export const Route = createFileRoute("/")({
   component: LocalAccessibility,
   loader: () => {
     if (typeof window === "undefined" && !process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
-    return getCurrentConditions();
+    return getCurrentConditions({ data: { releaseId: sampleRelease.manifest.releaseId } });
   },
 });
 
@@ -22,10 +23,11 @@ function LocalAccessibility() {
   const { snapshot, status } = useCurrentConditionsSync(
     currentConditions,
     sampleRelease.manifest.releaseId,
-    () => refreshConditions(),
+    () => refreshConditions({ data: { releaseId: sampleRelease.manifest.releaseId } }),
   );
   const submitObstacle = useServerFn(submitObstacleObservation);
   const submitEvent = useServerFn(submitConditionEvent);
+  const citywideReleaseUrl = import.meta.env.VITE_LOCAL_ACCESSIBILITY_RELEASE_URL;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
@@ -37,13 +39,13 @@ function LocalAccessibility() {
           configuration, source, and coverage.
         </p>
       </section>
-      <LocalAccessibilityExplorer
+      {citywideReleaseUrl ? <PublishedCitywideAccessibilityExplorer baseUrl={citywideReleaseUrl} refreshConditions={(releaseId) => refreshConditions({ data: { releaseId } })} /> : <LocalAccessibilityExplorer
         currentConditions={snapshot.conditions}
         profileKey="wheelchair"
         release={sampleRelease}
         submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
         submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
-      />
+      />}
       <CurrentConditionsLiveStatus status={status} />
     </main>
   );

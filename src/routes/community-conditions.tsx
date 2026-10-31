@@ -13,7 +13,7 @@ export const Route = createFileRoute("/community-conditions")({
   component: CommunityConditions,
   loader: () => {
     if (typeof window === "undefined" && !process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
-    return getCurrentConditions();
+    return getCurrentConditions({ data: { releaseId: sampleRelease.manifest.releaseId } });
   },
 });
 
@@ -24,7 +24,7 @@ function CommunityConditions() {
   const { refresh, snapshot, status } = useCurrentConditionsSync(
     Route.useLoaderData(),
     sampleRelease.manifest.releaseId,
-    () => refreshConditions(),
+    () => refreshConditions({ data: { releaseId: sampleRelease.manifest.releaseId } }),
   );
 
   function reconcileObstacle(_result: PersistedObstacleResult) {

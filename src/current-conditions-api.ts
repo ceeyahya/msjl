@@ -2,6 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 
 import { validateConditionEventSubmission, validateObstacleSubmission, type CurrentConditionsSnapshot } from "./current-conditions.js";
 
+function validateReleaseRequest(data: unknown): { releaseId: string } {
+  if (typeof data !== "object" || data === null || !("releaseId" in data) || typeof data.releaseId !== "string" || data.releaseId.trim() === "") {
+    throw new Error("A baseline release ID is required.");
+  }
+  return { releaseId: data.releaseId };
+}
+
 const policy = {
   assignmentThresholdMetres: 15,
   eligibilityRuleVersion: "conservative-pedestrian-network-v1",
@@ -47,16 +54,13 @@ export const submitConditionEvent = createServerFn({ method: "POST" })
   });
 
 export const getCurrentConditions = createServerFn({ method: "GET" })
-  .handler(async (): Promise<CurrentConditionsSnapshot> => {
+  .validator(validateReleaseRequest)
+  .handler(async ({ data }): Promise<CurrentConditionsSnapshot> => {
     if (!process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
 
     try {
-      const [{ sampleRelease }, { listCurrentConditionsSnapshot }] = await Promise.all([
-        import("./sample-release.js"),
-        import("./server/current-conditions-store.server.js"),
-      ]);
-
-      return await listCurrentConditionsSnapshot(sampleRelease.manifest.releaseId);
+      const { listCurrentConditionsSnapshot } = await import("./server/current-conditions-store.server.js");
+      return await listCurrentConditionsSnapshot(data.releaseId);
     } catch {
       // Community conditions are supplemental; an unavailable database must not hide the baseline release.
       return { conditions: [], unmatchedObservations: [] };

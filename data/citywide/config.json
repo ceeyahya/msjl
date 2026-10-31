@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "formulaVersion": "v1",
+  "dimensionBarrierCap": 0.9,
+  "indicators": {
+    "steps": { "dimension": "physical", "kind": "linear", "noProblemAt": 0, "totalObstacleAt": 6, "weight": 2 },
+    "slope": { "dimension": "physical", "kind": "directional-linear", "noProblemAt": 4, "totalObstacleAt": 12, "weight": 1 },
+    "surface": { "dimension": "physical", "kind": "linear", "noProblemAt": 0, "totalObstacleAt": 1, "weight": 1 },
+    "crossingEquipment": { "dimension": "sensory", "kind": "linear", "noProblemAt": 0, "totalObstacleAt": 1, "weight": 1 },
+    "noise": { "dimension": "sensory", "kind": "linear", "noProblemAt": 55, "totalObstacleAt": 85, "weight": 1 },
+    "freeServices": { "dimension": "economic", "kind": "linear", "noProblemAt": 0.6, "totalObstacleAt": 0, "weight": 1 }
+  },
+  "dimensions": {
+    "physical": { "minimumCoverage": 0.6 },
+    "sensory": { "minimumCoverage": 0.5 },
+    "economic": { "minimumCoverage": 1 }
+  },
+  "profiles": {
+    "wheelchair": {
+      "minimumCoverage": 0.5,
+      "weights": { "physical": 0.6, "sensory": 0.25, "economic": 0.15 }
+    }
+  }
+}

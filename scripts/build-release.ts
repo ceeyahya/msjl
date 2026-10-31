@@ -11,7 +11,7 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
 }
 
-function artifactFromManifest(manifest: unknown, name: "config" | "sources" | "segments"): ReleaseArtifact {
+function artifactFromManifest(manifest: unknown, name: string): ReleaseArtifact {
   if (!isRecord(manifest) || !isRecord(manifest.artifacts) || !isRecord(manifest.artifacts[name])) {
     throw new Error(`Release manifest does not define a ${name} artifact.`);
   }
@@ -55,6 +55,11 @@ export async function buildRelease(directory: string): Promise<LocalAccessibilit
   const config = await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, "config"));
   const sources = await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, "sources"));
   const segmentGeoJson = await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, "segments"));
+  if (isRecord(manifest) && isRecord(manifest.artifacts)) {
+    for (const name of ["mapSegments", "mapTiles", "segmentDetails"]) {
+      if (manifest.artifacts[name] !== undefined) await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, name));
+    }
+  }
 
   return validateRelease({ manifest, config, sources, segments: segmentsFromGeoJson(segmentGeoJson) });
 }

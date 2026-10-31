@@ -9,6 +9,9 @@ export interface ReleaseManifest {
     config: ReleaseArtifact;
     sources: ReleaseArtifact;
     segments: ReleaseArtifact;
+    mapSegments?: ReleaseArtifact;
+    mapTiles?: ReleaseArtifact;
+    segmentDetails?: ReleaseArtifact;
   };
 }
 
@@ -137,6 +140,15 @@ export function validateRelease(value: unknown): LocalAccessibilityRelease {
     assertText(manifest.artifacts[name].path, `manifest ${name} artifact requires a path`);
     if (typeof manifest.artifacts[name].sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(manifest.artifacts[name].sha256)) {
       fail(`manifest ${name} artifact requires a SHA-256 checksum`);
+    }
+  }
+  for (const name of ["mapSegments", "mapTiles", "segmentDetails"] as const) {
+    if (manifest.artifacts[name] !== undefined) {
+      assertRecord(manifest.artifacts[name], `manifest ${name} artifact must be an object`);
+      assertText(manifest.artifacts[name].path, `manifest ${name} artifact requires a path`);
+      if (typeof manifest.artifacts[name].sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(manifest.artifacts[name].sha256)) {
+        fail(`manifest ${name} artifact requires a SHA-256 checksum`);
+      }
     }
   }
 
