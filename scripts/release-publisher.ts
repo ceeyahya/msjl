@@ -153,6 +153,7 @@ export async function activateRelease(plan: PublicationPlan, storage: ObjectStor
 
 export async function publishRelease(options: {
   dryRun?: boolean;
+  onProgress?: ((completed: number, total: number) => void) | undefined;
   plan: PublicationPlan;
   releaseFiles: PublicationFile[];
   sourceFile: PublicationFile;
@@ -171,10 +172,8 @@ export async function publishRelease(options: {
     ...releaseFiles
       .filter((file) => file !== manifest)
       .map((file) => ({ bucket: plan.releaseBucket, key: releaseKey(plan, file.path), file })),
-    { bucket: plan.releaseBucket, key: plan.manifestKey, file: manifest },
   ];
   let bytes = 0;
-  let localManifest: Uint8Array | undefined;
 
   if (!options.dryRun) {
     const [manifestExists, sourceExists] = await Promise.all([
@@ -186,24 +185,47 @@ export async function publishRelease(options: {
     }
   }
 
-  for (const { bucket, key, file } of files) {
-    const body = await file.read();
-    bytes += body.byteLength;
-    if (file.path === "manifest.json") localManifest = body;
-    if (!options.dryRun) {
-      await storage.putObject({
-        bucket,
-        key,
-        body,
-        contentType: contentType(file.path),
-        cacheControl: immutableCacheControl,
-        createOnly: true,
-      });
+  let nextFile = 0;
+  let completed = 0;
+  const worker = async () => {
+    while (nextFile < files.length) {
+      const current = files[nextFile];
+      nextFile += 1;
+      if (!current) continue;
+      const { bucket, key, file } = current;
+      const body = await file.read();
+      bytes += body.byteLength;
+      if (!options.dryRun) {
+        await storage.putObject({
+          bucket,
+          key,
+          body,
+          contentType: contentType(file.path),
+          cacheControl: immutableCacheControl,
+          createOnly: true,
+        });
+      }
+      completed += 1;
+      if (completed === files.length || completed % 1_000 === 0) options.onProgress?.(completed, files.length + 1);
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(16, files.length) }, worker));
 
-  if (options.dryRun) return { releaseId: plan.pointer.releaseId, objects: files.length, bytes };
-  if (!localManifest) throw new Error("The release must include manifest.json.");
+  const localManifest = await manifest.read();
+  bytes += localManifest.byteLength;
+  if (!options.dryRun) {
+    await storage.putObject({
+      bucket: plan.releaseBucket,
+      key: plan.manifestKey,
+      body: localManifest,
+      contentType: "application/json",
+      cacheControl: immutableCacheControl,
+      createOnly: true,
+    });
+  }
+  options.onProgress?.(files.length + 1, files.length + 1);
+
+  if (options.dryRun) return { releaseId: plan.pointer.releaseId, objects: files.length + 1, bytes };
   if (releaseIdFromManifest(localManifest) !== plan.pointer.releaseId) {
     throw new Error("The local release manifest does not match the publication release ID.");
   }
@@ -213,5 +235,5 @@ export async function publishRelease(options: {
     throw new Error("The uploaded release manifest does not match the validated local manifest.");
   }
   await activateRelease(plan, storage);
-  return { releaseId: plan.pointer.releaseId, objects: files.length, bytes };
+  return { releaseId: plan.pointer.releaseId, objects: files.length + 1, bytes };
 }

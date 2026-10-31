@@ -4,6 +4,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 import type { ObjectStore, StoredObject } from "./release-publisher.js";
 
@@ -19,7 +20,9 @@ export function createS3ObjectStore(options: {
     },
     endpoint: options.endpoint,
     forcePathStyle: true,
+    maxAttempts: 2,
     region: "auto",
+    requestHandler: new NodeHttpHandler({ connectionTimeout: 10_000, socketTimeout: 60_000 }),
   });
 
   return {
