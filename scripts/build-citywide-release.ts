@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { buildCitywideSegments, type OsmElement } from "../src/citywide-release.js";
 import { validateConfig, validateRelease, type ReleaseArtifact, type ReleaseSource } from "../src/release.js";
 import { scoreSegment, type LocalAccessibilityConfig } from "../src/scoring.js";
+import { segmentDetailShard, segmentDetailShardCount } from "../src/segment-detail-shard.js";
 
 type Arguments = Record<string, string>;
 
@@ -159,12 +160,19 @@ async function writeMapTiles(directory: string, segments: ReturnType<typeof buil
 async function writeSegmentDetails(directory: string, segments: ReturnType<typeof buildCitywideSegments>): Promise<ReleaseArtifact> {
   const detailsDirectory = join(directory, "segment-details");
   await mkdir(detailsDirectory, { recursive: true });
+  const shards = Array.from({ length: segmentDetailShardCount }, () => ({} as Record<string, typeof segments[number]>));
   for (const segment of segments) {
-    await writeFile(join(detailsDirectory, `${segment.id}.json`), json(segment));
+    const index = Number.parseInt(segmentDetailShard(segment.id), 16);
+    const shard = shards[index];
+    if (!shard) throw new Error(`Could not assign segment ${segment.id} to a detail shard.`);
+    shard[segment.id] = segment;
   }
+  await Promise.all(shards.map((shard, index) =>
+    writeFile(join(detailsDirectory, `${index.toString(16).padStart(2, "0")}.json`), json(shard)),
+  ));
   return writeArtifact(directory, "segment-details.json", {
-    count: segments.length,
-    template: "segment-details/{id}.json",
+    shardCount: segmentDetailShardCount,
+    template: "segment-details/{shard}.json",
   });
 }
 

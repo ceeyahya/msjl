@@ -135,8 +135,8 @@ describe("CitywideLocalAccessibilityMap", () => {
       if (url.endsWith("config.json")) return config;
       if (url.endsWith("sources.json")) return [{ id: "osm", name: "OpenStreetMap", version: "snapshot", licence: "ODbL-1.0" }];
       if (url.endsWith("tiles.json")) return { tiles: ["tiles/{z}/{x}/{y}.pbf"], minzoom: 10, maxzoom: 15, bounds: [5.19, 43.16, 5.61, 43.49] };
-      if (url.endsWith("segment-details.json")) return { template: "segment-details/{id}.json" };
-      if (url.endsWith("segment-details/osm-way-100-0001.json")) return segment;
+      if (url.endsWith("segment-details.json")) return { shardCount: 256, template: "segment-details/{shard}.json" };
+      if (url.endsWith("segment-details/cb.json")) return { "osm-way-100-0001": segment };
       throw new Error(`Unexpected URL ${url}`);
     };
     const fetchMock = vi.fn(async (input: string | URL) => ({ ok: true, json: async () => responseFor(String(input)) }));
@@ -152,7 +152,7 @@ describe("CitywideLocalAccessibilityMap", () => {
     clickHandler?.({ features: [{ properties: { id: "osm-way-100-0001" } }] });
 
     expect(await screen.findByRole("heading", { name: "Selected segment: osm-way-100-0001" })).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith("https://assets.example/local-accessibility/releases/marseille-test/segment-details/osm-way-100-0001.json");
+    expect(fetchMock).toHaveBeenCalledWith("https://assets.example/local-accessibility/releases/marseille-test/segment-details/cb.json");
   });
 
   it.each([

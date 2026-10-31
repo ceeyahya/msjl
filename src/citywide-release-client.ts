@@ -1,5 +1,6 @@
 import { validateConfig, type ReleaseManifest, type ReleaseSegment, type ReleaseSource } from "./release.js";
 import type { LocalAccessibilityConfig } from "./scoring.js";
+import { segmentDetailShard } from "./segment-detail-shard.js";
 
 export interface CitywideRelease {
   baseUrl: string;
@@ -12,6 +13,7 @@ export interface CitywideRelease {
     minzoom: number;
     tiles: string[];
   };
+  detailShardCount: number;
   detailTemplate: string;
 }
 
@@ -86,7 +88,8 @@ export async function loadCitywideRelease(baseUrl: string, expectedReleaseId?: s
     readJson(joinUrl(root, String(manifest.artifacts.segmentDetails.path))),
   ]);
   validateConfig(config);
-  if (!Array.isArray(sources) || !isRecord(tileJson) || !isRecord(details) || typeof details.template !== "string") {
+  if (!Array.isArray(sources) || !isRecord(tileJson) || !isRecord(details) || typeof details.template !== "string"
+    || typeof details.shardCount !== "number" || !Number.isInteger(details.shardCount) || details.shardCount <= 0) {
     throw new Error("The citywide release map artifacts are invalid.");
   }
   const tileJsonUrl = joinUrl(root, String(manifest.artifacts.mapTiles.path));
@@ -97,13 +100,17 @@ export async function loadCitywideRelease(baseUrl: string, expectedReleaseId?: s
     manifest: manifest as unknown as ReleaseManifest,
     sources: sources as ReleaseSource[],
     tileSource: tileSourceFromTileJson(tileJson, tileJsonUrl),
+    detailShardCount: details.shardCount,
     detailTemplate: details.template,
   };
 }
 
 export async function loadCitywideSegment(release: CitywideRelease, segmentId: string): Promise<ReleaseSegment> {
-  const path = release.detailTemplate.replace("{id}", encodeURIComponent(segmentId));
-  const segment = await readJson(joinUrl(release.baseUrl, path));
+  const shard = segmentDetailShard(segmentId);
+  if (Number.parseInt(shard, 16) >= release.detailShardCount) throw new Error("The citywide release detail shard is invalid.");
+  const path = release.detailTemplate.replace("{shard}", shard);
+  const details = await readJson(joinUrl(release.baseUrl, path));
+  const segment = isRecord(details) ? details[segmentId] : undefined;
   if (!isRecord(segment) || typeof segment.id !== "string" || !isRecord(segment.geometry) || segment.geometry.type !== "LineString") {
     throw new Error(`The citywide release detail for ${segmentId} is invalid.`);
   }

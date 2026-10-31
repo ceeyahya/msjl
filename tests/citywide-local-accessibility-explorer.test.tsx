@@ -55,7 +55,7 @@ describe("PublishedCitywideAccessibilityExplorer", () => {
       if (url === `${releaseBaseUrl}/config.json`) return { ok: true, json: async () => config };
       if (url === `${releaseBaseUrl}/sources.json`) return { ok: true, json: async () => [] };
       if (url === `${releaseBaseUrl}/tiles.json`) return { ok: true, json: async () => ({ tiles: ["tiles/{z}/{x}/{y}.pbf"], minzoom: 10, maxzoom: 15, bounds: [5.19, 43.16, 5.61, 43.49] }) };
-      if (url === `${releaseBaseUrl}/segment-details.json`) return { ok: true, json: async () => ({ template: "segment-details/{id}.json" }) };
+      if (url === `${releaseBaseUrl}/segment-details.json`) return { ok: true, json: async () => ({ shardCount: 256, template: "segment-details/{shard}.json" }) };
       throw new Error(`Unexpected URL ${url}`);
     }));
 
