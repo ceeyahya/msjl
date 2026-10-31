@@ -12,13 +12,13 @@ import { sampleRelease } from "../sample-release.js";
 export const Route = createFileRoute("/")({
   component: LocalAccessibility,
   loader: () => {
+    if (import.meta.env.VITE_LOCAL_ACCESSIBILITY_RELEASE_URL) return { conditions: [], unmatchedObservations: [] };
     if (typeof window === "undefined" && !process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
     return getCurrentConditions({ data: { releaseId: sampleRelease.manifest.releaseId } });
   },
 });
 
-function LocalAccessibility() {
-  const currentConditions = Route.useLoaderData();
+function SampleLocalAccessibility({ currentConditions }: { currentConditions: Awaited<ReturnType<typeof Route.useLoaderData>> }) {
   const refreshConditions = useServerFn(getCurrentConditions);
   const { snapshot, status } = useCurrentConditionsSync(
     currentConditions,
@@ -27,7 +27,23 @@ function LocalAccessibility() {
   );
   const submitObstacle = useServerFn(submitObstacleObservation);
   const submitEvent = useServerFn(submitConditionEvent);
-  const citywideReleaseUrl = import.meta.env.VITE_LOCAL_ACCESSIBILITY_RELEASE_URL;
+
+  return <>
+    <LocalAccessibilityExplorer
+      currentConditions={snapshot.conditions}
+      profileKey="wheelchair"
+      release={sampleRelease}
+      submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
+      submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
+    />
+    <CurrentConditionsLiveStatus status={status} />
+  </>;
+}
+
+function LocalAccessibility() {
+  const currentConditions = Route.useLoaderData();
+  const refreshConditions = useServerFn(getCurrentConditions);
+  const citywideReleasePointerUrl = import.meta.env.VITE_LOCAL_ACCESSIBILITY_RELEASE_URL;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
@@ -39,14 +55,9 @@ function LocalAccessibility() {
           configuration, source, and coverage.
         </p>
       </section>
-      {citywideReleaseUrl ? <PublishedCitywideAccessibilityExplorer baseUrl={citywideReleaseUrl} refreshConditions={(releaseId) => refreshConditions({ data: { releaseId } })} /> : <LocalAccessibilityExplorer
-        currentConditions={snapshot.conditions}
-        profileKey="wheelchair"
-        release={sampleRelease}
-        submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
-        submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
-      />}
-      <CurrentConditionsLiveStatus status={status} />
+      {citywideReleasePointerUrl
+        ? <PublishedCitywideAccessibilityExplorer pointerUrl={citywideReleasePointerUrl} refreshConditions={(releaseId) => refreshConditions({ data: { releaseId } })} />
+        : <SampleLocalAccessibility currentConditions={currentConditions} />}
     </main>
   );
 }

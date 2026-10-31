@@ -128,6 +128,7 @@ describe("CitywideLocalAccessibilityMap", () => {
       relations: [{ indicator: "steps", sourceId: "osm", method: "intersects", confidence: 1 }],
     };
     const responseFor = (url: string) => {
+      if (url.endsWith("current.json")) return { schemaVersion: 1, releaseId: "marseille-test", baseUrl: "./releases/marseille-test/" };
       if (url.endsWith("manifest.json")) return { schemaVersion: 1, releaseId: "marseille-test", builtAt: "2026-10-30T00:00:00.000Z", formulaVersion: "v1", artifacts: {
         config: { path: "config.json" }, sources: { path: "sources.json" }, mapTiles: { path: "tiles.json" }, segmentDetails: { path: "segment-details.json" },
       } };
@@ -141,16 +142,33 @@ describe("CitywideLocalAccessibilityMap", () => {
     const fetchMock = vi.fn(async (input: string | URL) => ({ ok: true, json: async () => responseFor(String(input)) }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<PublishedCitywideAccessibilityExplorer baseUrl="https://assets.example/releases/marseille-test" refreshConditions={async () => ({ conditions: [], unmatchedObservations: [] })} />);
+    render(<PublishedCitywideAccessibilityExplorer pointerUrl="https://assets.example/local-accessibility/current.json" refreshConditions={async () => ({ conditions: [], unmatchedObservations: [] })} />);
 
     await screen.findByText("Explore release-backed segments");
     expect(map.addSource).toHaveBeenCalledWith("release-segment-tiles", expect.objectContaining({
-      tiles: ["https://assets.example/releases/marseille-test/tiles/{z}/{x}/{y}.pbf"],
+      tiles: ["https://assets.example/local-accessibility/releases/marseille-test/tiles/{z}/{x}/{y}.pbf"],
     }));
     const clickHandler = map.on.mock.calls.find(([event, layerId]) => event === "click" && layerId === "release-segments-scored")?.[2] as ((event: { features: Array<{ properties: { id: string } }> }) => void) | undefined;
     clickHandler?.({ features: [{ properties: { id: "osm-way-100-0001" } }] });
 
     expect(await screen.findByRole("heading", { name: "Selected segment: osm-way-100-0001" })).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith("https://assets.example/releases/marseille-test/segment-details/osm-way-100-0001.json");
+    expect(fetchMock).toHaveBeenCalledWith("https://assets.example/local-accessibility/releases/marseille-test/segment-details/osm-way-100-0001.json");
+  });
+
+  it.each([
+    ["a malformed pointer", async () => ({ ok: true, json: async () => ({ schemaVersion: 1, releaseId: "marseille-test" }) }), "The citywide release pointer is invalid."],
+    ["a mismatched manifest", async (url: string) => ({ ok: true, json: async () => url.endsWith("current.json")
+      ? { schemaVersion: 1, releaseId: "marseille-test", baseUrl: "./releases/marseille-test/" }
+      : { schemaVersion: 1, releaseId: "other-release", artifacts: { config: {}, sources: {}, mapTiles: {}, segmentDetails: {} } } }), "The citywide release pointer does not match the referenced release manifest."],
+    ["an unavailable pointer", async () => ({ ok: false, status: 503, json: async () => undefined }), "Could not load https://assets.example/local-accessibility/current.json: HTTP 503."],
+    ["an unavailable release manifest", async (url: string) => url.endsWith("current.json")
+      ? { ok: true, json: async () => ({ schemaVersion: 1, releaseId: "marseille-test", baseUrl: "./releases/marseille-test/" }) }
+      : { ok: false, status: 404, json: async () => undefined }, "Could not load https://assets.example/local-accessibility/releases/marseille-test/manifest.json: HTTP 404."],
+  ])("shows an actionable alert for %s", async (_scenario, responseFor, message) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => responseFor(String(input))));
+
+    render(<PublishedCitywideAccessibilityExplorer pointerUrl="https://assets.example/local-accessibility/current.json" refreshConditions={async () => ({ conditions: [], unmatchedObservations: [] })} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
   });
 });

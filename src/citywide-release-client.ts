@@ -29,6 +29,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function resolveHttpUrl(value: string, baseUrl?: string): string {
+  let url: URL;
+  try {
+    url = new URL(value, baseUrl ?? (typeof window === "undefined" ? "http://localhost/" : window.location.href));
+  } catch {
+    throw new Error("The citywide release pointer contains an invalid URL.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("The citywide release pointer URL must use HTTP or HTTPS.");
+  }
+  return url.toString();
+}
+
+export async function loadCitywideReleaseFromPointer(pointerUrl: string): Promise<CitywideRelease> {
+  const resolvedPointerUrl = resolveHttpUrl(pointerUrl);
+  const pointer = await readJson(resolvedPointerUrl);
+  if (!isRecord(pointer) || pointer.schemaVersion !== 1 || typeof pointer.releaseId !== "string" || !pointer.releaseId.trim()
+    || typeof pointer.baseUrl !== "string" || !pointer.baseUrl.trim()) {
+    throw new Error("The citywide release pointer is invalid.");
+  }
+
+  return loadCitywideRelease(resolveHttpUrl(pointer.baseUrl, resolvedPointerUrl), pointer.releaseId);
+}
+
 function tileSourceFromTileJson(tileJson: Record<string, unknown>, tileJsonUrl: string): CitywideRelease["tileSource"] {
   if (!Array.isArray(tileJson.tiles) || !tileJson.tiles.length || !tileJson.tiles.every((tile) => typeof tile === "string")
     || !Array.isArray(tileJson.bounds) || tileJson.bounds.length !== 4 || !tileJson.bounds.every((coordinate) => typeof coordinate === "number")
@@ -45,12 +69,15 @@ function tileSourceFromTileJson(tileJson: Record<string, unknown>, tileJsonUrl: 
   };
 }
 
-export async function loadCitywideRelease(baseUrl: string): Promise<CitywideRelease> {
+export async function loadCitywideRelease(baseUrl: string, expectedReleaseId?: string): Promise<CitywideRelease> {
   const root = baseUrl.replace(/\/$/u, "");
   const manifest = await readJson(joinUrl(root, "manifest.json"));
   if (!isRecord(manifest) || !isRecord(manifest.artifacts) || !isRecord(manifest.artifacts.config) || !isRecord(manifest.artifacts.sources)
     || !isRecord(manifest.artifacts.mapTiles) || !isRecord(manifest.artifacts.segmentDetails)) {
     throw new Error("The citywide release manifest does not declare the required map artifacts.");
+  }
+  if (expectedReleaseId && manifest.releaseId !== expectedReleaseId) {
+    throw new Error("The citywide release pointer does not match the referenced release manifest.");
   }
   const [config, sources, tileJson, details] = await Promise.all([
     readJson(joinUrl(root, String(manifest.artifacts.config.path))),

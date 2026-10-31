@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useRef, useState } from "react";
 
-import { loadCitywideRelease, loadCitywideSegment, type CitywideRelease } from "../citywide-release-client.js";
+import { loadCitywideReleaseFromPointer, loadCitywideSegment, type CitywideRelease } from "../citywide-release-client.js";
 import type { CurrentConditionsSnapshot } from "../current-conditions.js";
 import { useCurrentConditionsSync } from "../current-conditions-sync.js";
 import { scoreSegment, type SegmentScore } from "../scoring.js";
@@ -82,17 +82,17 @@ function CitywideReleaseView({ refreshConditions, release }: { refreshConditions
   );
 }
 
-export function PublishedCitywideAccessibilityExplorer({ baseUrl, refreshConditions }: { baseUrl: string; refreshConditions: (releaseId: string) => Promise<CurrentConditionsSnapshot> }) {
+export function PublishedCitywideAccessibilityExplorer({ pointerUrl, refreshConditions }: { pointerUrl: string; refreshConditions: (releaseId: string) => Promise<CurrentConditionsSnapshot> }) {
   const [release, setRelease] = useState<CitywideRelease>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let cancelled = false;
-    void loadCitywideRelease(baseUrl)
+    void loadCitywideReleaseFromPointer(pointerUrl)
       .then((loadedRelease) => { if (!cancelled) startTransition(() => setRelease(loadedRelease)); })
       .catch((loadError: unknown) => { if (!cancelled) setError(loadError instanceof Error ? loadError.message : "The citywide release could not be loaded."); });
     return () => { cancelled = true; };
-  }, [baseUrl]);
+  }, [pointerUrl]);
 
   if (error) return <p className="mt-16 text-sm text-destructive" role="alert">{error}</p>;
   if (!release) return <p className="mt-16 text-sm text-muted-foreground" role="status">Loading the citywide Local Accessibility release.</p>;

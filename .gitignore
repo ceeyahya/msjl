@@ -16,3 +16,4 @@ docs/adr/
 data/citywide/*.json
 !data/citywide/config.json
 releases/marseille-*/
+releases/current.json
