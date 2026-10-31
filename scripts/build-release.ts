@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { validateRelease, type LocalAccessibilityRelease, type ReleaseArtifact } from "../src/release.js";
 
@@ -64,10 +65,12 @@ export async function buildRelease(directory: string): Promise<LocalAccessibilit
   return validateRelease({ manifest, config, sources, segments: segmentsFromGeoJson(segmentGeoJson) });
 }
 
-const directory = process.argv[2];
-if (!directory) {
-  throw new Error("Usage: npm run build-release -- <release-directory>");
-}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const directory = process.argv[2];
+  if (!directory) {
+    throw new Error("Usage: npm run build-release -- <release-directory>");
+  }
 
-const release = await buildRelease(directory);
-console.log(`Validated ${release.manifest.releaseId}: ${release.segments.length} segments.`);
+  const release = await buildRelease(directory);
+  console.log(`Validated ${release.manifest.releaseId}: ${release.segments.length} segments.`);
+}

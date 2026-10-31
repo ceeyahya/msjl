@@ -1,0 +1,39 @@
+name: Publish citywide release
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: citywide-release-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    environment: citywide-release
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      R2_RELEASE_BUCKET: ${{ vars.R2_RELEASE_BUCKET }}
+      R2_SOURCE_BUCKET: ${{ vars.R2_SOURCE_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - id: release
+        run: |
+          echo "id=marseille-$(date -u +%Y%m%dt%H%M%Sz)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$GITHUB_OUTPUT"
+      - run: npm run fetch-citywide-osm -- --output data/citywide/osm-${{ steps.release.outputs.id }}.json
+      - run: npm run build-citywide-release -- --input data/citywide/osm-${{ steps.release.outputs.id }}.json --config data/citywide/config.json --output releases/${{ steps.release.outputs.id }} --release-id ${{ steps.release.outputs.id }} --built-at ${{ steps.release.outputs.built_at }}
+      - run: npm run build-release -- releases/${{ steps.release.outputs.id }}
+      - run: npm run publish-citywide-release -- --release releases/${{ steps.release.outputs.id }} --source data/citywide/osm-${{ steps.release.outputs.id }}.json --bucket "$R2_RELEASE_BUCKET" --source-bucket "$R2_SOURCE_BUCKET" --endpoint "$R2_ENDPOINT"

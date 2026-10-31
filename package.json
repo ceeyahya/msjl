@@ -13,13 +13,16 @@
     "generate-routes": "tsr generate",
     "fetch-citywide-osm": "tsx scripts/fetch-citywide-osm.ts",
     "migrate-current-conditions": "tsx scripts/migrate-current-conditions.ts",
+    "publish-citywide-release": "tsx scripts/publish-citywide-release.ts",
     "preview": "vite preview",
+    "rollback-citywide-release": "tsx scripts/rollback-citywide-release.ts",
     "test": "vitest run --config vitest.config.ts",
     "test:current-conditions:integration": "npm run migrate-current-conditions && node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.config.ts tests/current-conditions-postgis.test.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
     "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-router": "^1.170.46",
