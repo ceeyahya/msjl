@@ -2,7 +2,7 @@ export interface CurrentConditionsChange {
   baselineReleaseId: string;
 }
 
-export type CurrentConditionsConnectionStatus = "connected" | "unavailable";
+export type CurrentConditionsConnectionStatus = "connecting" | "connected" | "reconnecting" | "unavailable";
 
 export interface CurrentConditionsChangeFeed {
   subscribe(

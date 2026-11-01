@@ -25,6 +25,7 @@ async function publishPersistedChange(publisher: CurrentConditionsChangePublishe
     await publisher.publish({ baselineReleaseId });
   } catch {
     // A committed write remains authoritative even if the supplemental live feed is unavailable.
+    console.warn(`Community Conditions live-update publication failed for release ${baselineReleaseId}; the persisted condition remains available.`);
   }
 }
 

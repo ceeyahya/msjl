@@ -4,7 +4,7 @@
 
 Keep the versioned baseline release as the authoritative open/official-data result. Add a separate reactive current-conditions plane for community observations.
 
-An obstacle report updates the submitting browser optimistically, is persisted, matched to eligible segments, and derives a provisional result for only the affected segments. It never overwrites the baseline release or its score.
+An obstacle report updates the submitting browser optimistically, is persisted, matched to eligible segments, and derives a provisional effective-current local result for only the affected segments. It never overwrites the baseline release or its score.
 
 See `docs/architecture/reactive-current-conditions.html` for the architecture delta diagram.
 
@@ -39,7 +39,7 @@ If reliable public availability becomes a requirement, migrate the standard Post
 1. The browser creates an immutable obstacle observation and immediately shows it locally.
 2. The API validates and persists it in Supabase Postgres.
 3. PostGIS assigns the point to the nearest eligible segment within the configured threshold; unmatched reports remain stored with their reason.
-4. The current-condition scorer combines active observations with existing baseline values for the assigned segment and its configured local influence area.
+4. The current-condition scorer derives the assigned segment's provisional community barrier from active category-and-severity observations, then recalculates the effective-current local result from the immutable baseline dimensions. It stores the policy version and impact breakdown.
 5. The API persists the derived current-condition projection.
 6. Supabase Realtime broadcasts the persisted report/projection change.
 7. All open clients update their existing MapLibre sources. They do not rebuild the map or download a new baseline release.
@@ -50,6 +50,6 @@ The browser's optimistic result is reconciled with the persisted server result. 
 
 - Baseline rebuilds are full GIS/data-pipeline jobs, scheduled or manually invoked.
 - Report writes are small, bounded database operations.
-- A report affects current conditions only, labelled provisional/community-derived.
+- A report affects an explicitly labelled, versioned effective-current local score only. The immutable baseline score remains visible and unchanged.
 - Dynamic conditions must retain observation provenance and must be reversible by later resolution or reopening observations.
 - Domain code relies on standard PostgreSQL/PostGIS contracts rather than Supabase-specific business logic. Supabase Realtime is an infrastructure adapter, replaceable by another change-feed implementation.

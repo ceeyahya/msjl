@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { closeCurrentConditionsStore, listCurrentConditions, listCurrentConditionsSnapshot, persistConditionEvent, persistObstacle } from "../src/server/current-conditions-store.server.js";
 
@@ -112,6 +112,27 @@ describePostgis("PostGIS current-condition persistence", () => {
     }, segments, policy, publisher);
 
     expect(published).toEqual([policy.baselineReleaseId]);
+  });
+
+  it("keeps a committed observation when live-update publication fails", async () => {
+    const policy = policyFor(`current-conditions-publish-failure-${randomUUID()}`);
+    const diagnostic = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = await persistObstacle({
+        category: "blocked-path",
+        description: "Temporary construction barrier narrows the pavement.",
+        latitude: 43.29005,
+        longitude: 5.37005,
+        observedAt: "2026-10-29",
+      }, segments, policy, { publish: async () => { throw new Error("Realtime unavailable"); } });
+
+      expect(result.assignment.status).toBe("assigned");
+      await expect(listCurrentConditions(policy.baselineReleaseId)).resolves.toHaveLength(1);
+      expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining(policy.baselineReleaseId));
+    } finally {
+      diagnostic.mockRestore();
+    }
   });
 
   it("persists an unmatched observation without a projection", async () => {
