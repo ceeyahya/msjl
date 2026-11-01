@@ -63,6 +63,15 @@ The pointer is a small mutable JSON document. Its `releaseId` must match the ref
 
 The application rejects malformed pointers and a pointer whose release ID differs from the manifest. Resolving the pointer occurs when the citywide explorer loads; an already open browser tab does not automatically switch releases.
 
+Before accepting Community Conditions for a published baseline release, prepare its validated artifact in PostGIS. Preparation validates every manifest-declared artifact checksum, records the `segments.geojson` identity and expected eligible-segment count, then bulk-loads only eligible segment geometry. It is idempotent only when both the release identity and count match; it never runs from a browser or request handler.
+
+```text
+npm run migrate-current-conditions
+npm run prepare-current-conditions-release -- --release-url https://data.example.org/local-accessibility/releases/marseille-2026-10-31/ --expected-eligible-segment-count 97300
+```
+
+Use the exact count reported by the validated build. For a local development artifact, replace `--release-url <url>` with `--release <directory>`. An unknown or unprepared release cannot read or write Community Conditions; there is no sample-release fallback. Prepare the release before moving `current.json` to it, and retain its immutable artifacts for rollback.
+
 The static host must:
 
 - Serve the public release prefix and pointer over HTTPS.
@@ -93,7 +102,7 @@ Roll back by activating an existing release. The command reads its remote manife
 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... npm run rollback-citywide-release -- --release-id marseille-2026-10-31 --bucket <public-release-bucket> --source-bucket <private-source-bucket> --endpoint https://<s3-compatible-endpoint>
 ```
 
-The scheduled and manually dispatched GitHub Actions workflow uses the `citywide-release` GitHub Environment. Configure `R2_ENDPOINT`, `R2_RELEASE_BUCKET`, and `R2_SOURCE_BUCKET` as environment variables, plus `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` as environment secrets. Do not put credentials in repository files, command history, logs, or release artifacts.
+The scheduled and manually dispatched GitHub Actions workflow uses the `citywide-release` GitHub Environment. Configure `R2_ENDPOINT`, `R2_PUBLIC_BASE_URL`, `R2_RELEASE_BUCKET`, and `R2_SOURCE_BUCKET` as environment variables, plus `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and the least-privileged PostGIS `DATABASE_URL` as environment secrets. The workflow uploads immutable artifacts, prepares the published release in PostGIS, and only then switches `current.json`. Do not put credentials in repository files, command history, logs, or release artifacts.
 
 The initial retention policy is no automatic deletion: preserve every published release and source snapshot until a replacement lifecycle policy is adopted. Rollback changes only the pointer; it never overwrites immutable release objects.
 

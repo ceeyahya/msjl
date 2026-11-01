@@ -114,6 +114,26 @@ describe("citywide release publisher", () => {
     expect(storage.writes.some((write) => write.key === "current.json")).toBe(false);
   });
 
+  it("can publish immutable artifacts without switching the current pointer", async () => {
+    const storage = objectStore();
+    const plan = createPublicationPlan({
+      releaseBucket: "public-releases",
+      sourceBucket: "private-snapshots",
+      releaseId: "marseille-20261031-1",
+      sourceFileName: "osm.json",
+    });
+
+    await publishRelease({
+      activate: false,
+      plan,
+      storage,
+      sourceFile: { path: "osm.json", read: async () => encoder.encode("source") },
+      releaseFiles: [{ path: "manifest.json", read: async () => manifest }],
+    });
+
+    expect(storage.writes.some((write) => write.key === "current.json")).toBe(false);
+  });
+
   it("only updates the pointer for a remote manifest with the requested release ID", async () => {
     const storage = objectStore(encoder.encode('{"releaseId":"different"}\n'));
     const plan = createPublicationPlan({

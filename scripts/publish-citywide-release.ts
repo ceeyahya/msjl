@@ -50,7 +50,9 @@ const plan = createPublicationPlan({
   pointerKey: argument("pointer-key"),
 });
 const dryRun = process.argv.includes("--dry-run");
+const activate = !process.argv.includes("--no-activate");
 const report = await publishRelease({
+  activate,
   dryRun,
   plan,
   releaseFiles: await filesIn(releaseDirectory),
@@ -67,4 +69,4 @@ const report = await publishRelease({
   }),
 });
 
-console.log(`${dryRun ? "Would publish" : "Published"} ${report.releaseId}: ${report.objects} objects, ${report.bytes} bytes.`);
+console.log(`${dryRun ? "Would publish" : activate ? "Published and activated" : "Published without activation"} ${report.releaseId}: ${report.objects} objects, ${report.bytes} bytes.`);

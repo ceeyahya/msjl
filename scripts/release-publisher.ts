@@ -152,6 +152,7 @@ export async function activateRelease(plan: PublicationPlan, storage: ObjectStor
 }
 
 export async function publishRelease(options: {
+  activate?: boolean;
   dryRun?: boolean;
   onProgress?: ((completed: number, total: number) => void) | undefined;
   plan: PublicationPlan;
@@ -234,6 +235,6 @@ export async function publishRelease(options: {
   if (!equalBytes(remoteManifest, localManifest)) {
     throw new Error("The uploaded release manifest does not match the validated local manifest.");
   }
-  await activateRelease(plan, storage);
+  if (options.activate ?? true) await activateRelease(plan, storage);
   return { releaseId: plan.pointer.releaseId, objects: files.length + 1, bytes };
 }

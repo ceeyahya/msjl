@@ -13,6 +13,7 @@
     "generate-routes": "tsr generate",
     "fetch-citywide-osm": "tsx scripts/fetch-citywide-osm.ts",
     "migrate-current-conditions": "tsx scripts/migrate-current-conditions.ts",
+    "prepare-current-conditions-release": "tsx scripts/prepare-current-conditions-release.ts",
     "publish-citywide-release": "tsx scripts/publish-citywide-release.ts",
     "preview": "vite preview",
     "rollback-citywide-release": "tsx scripts/rollback-citywide-release.ts",

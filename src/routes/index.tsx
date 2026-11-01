@@ -33,8 +33,12 @@ function SampleLocalAccessibility({ currentConditions }: { currentConditions: Aw
       currentConditions={snapshot.conditions}
       profileKey="wheelchair"
       release={sampleRelease}
-      submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
-      submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
+      submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({
+        data: { releaseId: sampleRelease.manifest.releaseId, submission },
+      })}
+      submitObstacle={(submission: ObstacleSubmission) => submitObstacle({
+        data: { releaseId: sampleRelease.manifest.releaseId, submission },
+      })}
     />
     <CurrentConditionsLiveStatus status={status} />
   </>;

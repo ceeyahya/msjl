@@ -48,25 +48,94 @@ function getPool(): Pool {
   return pool;
 }
 
-async function seedBaselineSegments(
+export interface PreparedBaselineRelease {
+  releaseId: string;
+  segmentsArtifactSha256: string;
+  expectedEligibleSegmentCount: number;
+  segments: EligibleSegment[];
+}
+
+async function requirePreparedBaselineRelease(
   client: PoolClient,
   releaseId: string,
-  segments: EligibleSegment[],
 ): Promise<void> {
-  await client.query(
-    "INSERT INTO baseline_releases (release_id) VALUES ($1) ON CONFLICT (release_id) DO NOTHING",
-    [releaseId],
-  );
-
-  for (const segment of segments) {
-    await client.query(
-      `INSERT INTO baseline_segments (release_id, segment_id, geometry, eligible)
-       VALUES ($1, $2, ST_SetSRID(ST_GeomFromGeoJSON($3), 4326)::geography, true)
-       ON CONFLICT (release_id, segment_id) DO NOTHING`,
-      [releaseId, segment.id, JSON.stringify(segment.geometry)],
-    );
+  const prepared = await client.query("SELECT 1 FROM prepared_baseline_releases WHERE release_id = $1", [releaseId]);
+  if (!prepared.rowCount) {
+    throw new Error(`Baseline release ${releaseId} has not been prepared for Community Conditions.`);
   }
 }
+
+export async function prepareBaselineRelease(release: PreparedBaselineRelease): Promise<void> {
+  if (release.segments.length !== release.expectedEligibleSegmentCount) {
+    throw new Error("Prepared baseline release segment count does not match the expected eligible segment count.");
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('prepare-baseline-release'), hashtext($1))", [release.releaseId]);
+    await client.query("INSERT INTO baseline_releases (release_id) VALUES ($1) ON CONFLICT (release_id) DO NOTHING", [release.releaseId]);
+
+    const existing = await client.query<{
+      segments_artifact_sha256: string;
+      expected_eligible_segment_count: number;
+    }>(
+      `SELECT segments_artifact_sha256, expected_eligible_segment_count
+       FROM prepared_baseline_releases
+       WHERE release_id = $1`,
+      [release.releaseId],
+    );
+    const prepared = existing.rows[0];
+    if (prepared) {
+      if (prepared.segments_artifact_sha256 !== release.segmentsArtifactSha256
+        || prepared.expected_eligible_segment_count !== release.expectedEligibleSegmentCount) {
+        throw new Error("Baseline release is already prepared with a different artifact identity or segment count.");
+      }
+      await client.query("COMMIT");
+      return;
+    }
+
+    const observations = await client.query("SELECT 1 FROM condition_observations WHERE release_id = $1 LIMIT 1", [release.releaseId]);
+    if (observations.rowCount) {
+      throw new Error("Baseline release cannot be prepared because it already has Community Conditions evidence.");
+    }
+    await client.query("DELETE FROM baseline_segments WHERE release_id = $1", [release.releaseId]);
+
+    for (let offset = 0; offset < release.segments.length; offset += 500) {
+      const batch = release.segments.slice(offset, offset + 500).map((segment) => ({
+        id: segment.id,
+        geometry: segment.geometry,
+      }));
+      await client.query(
+        `INSERT INTO baseline_segments (release_id, segment_id, geometry, eligible)
+         SELECT $1, segment.id, ST_SetSRID(ST_GeomFromGeoJSON(segment.geometry::text), 4326)::geography, true
+         FROM jsonb_to_recordset($2::jsonb) AS segment(id text, geometry jsonb)`,
+        [release.releaseId, JSON.stringify(batch)],
+      );
+    }
+
+    const count = await client.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM baseline_segments WHERE release_id = $1 AND eligible",
+      [release.releaseId],
+    );
+    if (count.rows[0]?.count !== release.expectedEligibleSegmentCount) {
+      throw new Error("Prepared baseline release did not load the expected eligible segment count.");
+    }
+    await client.query(
+      `INSERT INTO prepared_baseline_releases (
+        release_id, segments_artifact_sha256, expected_eligible_segment_count
+      ) VALUES ($1, $2, $3)`,
+      [release.releaseId, release.segmentsArtifactSha256, release.expectedEligibleSegmentCount],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 
 async function refreshProjection(
   client: PoolClient,
@@ -137,7 +206,6 @@ async function refreshProjection(
 
 export async function persistObstacle(
   submission: ObstacleSubmission,
-  segments: EligibleSegment[],
   policy: CurrentConditionPolicy,
   publisher: CurrentConditionsChangePublisher = currentConditionsChangePublisher,
 ): Promise<PersistedObstacleResult> {
@@ -147,7 +215,7 @@ export async function persistObstacle(
 
   try {
     await client.query("BEGIN");
-    await seedBaselineSegments(client, policy.baselineReleaseId, segments);
+    await requirePreparedBaselineRelease(client, policy.baselineReleaseId);
     await client.query(
       `INSERT INTO condition_observations (
         id, release_id, event_type, category, description, observed_at, recorded_at, location
@@ -247,6 +315,7 @@ export async function persistConditionEvent(
 
   try {
     await client.query("BEGIN");
+    await requirePreparedBaselineRelease(client, policy.baselineReleaseId);
     // The target obstacle defines the lifecycle stream, so only one transition can validate it at a time.
     await client.query("SELECT pg_advisory_xact_lock(0, hashtext($1))", [submission.obstacleObservationId]);
     const target = await client.query<{
@@ -318,6 +387,12 @@ export async function persistConditionEvent(
 }
 
 export async function listCurrentConditions(releaseId: string): Promise<CurrentCondition[]> {
+  const client = await getPool().connect();
+  try {
+    await requirePreparedBaselineRelease(client, releaseId);
+  } finally {
+    client.release();
+  }
   const rows = await getPool().query<{
     segment_id: string;
     condition: "reported-obstacle";

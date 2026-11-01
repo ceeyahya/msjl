@@ -11,9 +11,17 @@ import { CurrentConditionsLiveStatus, useCurrentConditionsSync } from "../curren
 import { sampleRelease } from "../sample-release.js";
 export const Route = createFileRoute("/community-conditions")({
   component: CommunityConditions,
-  loader: () => {
-    if (typeof window === "undefined" && !process.env.DATABASE_URL) return { conditions: [], unmatchedObservations: [] };
-    return getCurrentConditions({ data: { releaseId: sampleRelease.manifest.releaseId } });
+  loader: async () => {
+    const pointerUrl = import.meta.env.VITE_LOCAL_ACCESSIBILITY_RELEASE_URL;
+    let releaseId = sampleRelease.manifest.releaseId;
+    if (pointerUrl) {
+      const { loadCitywideReleaseFromPointer } = await import("../citywide-release-client.js");
+      releaseId = (await loadCitywideReleaseFromPointer(pointerUrl)).manifest.releaseId;
+    }
+    if (typeof window === "undefined" && !process.env.DATABASE_URL) {
+      return { releaseId, snapshot: { conditions: [], unmatchedObservations: [] } };
+    }
+    return { releaseId, snapshot: await getCurrentConditions({ data: { releaseId } }) };
   },
 });
 
@@ -21,10 +29,11 @@ function CommunityConditions() {
   const submitObstacle = useServerFn(submitObstacleObservation);
   const submitEvent = useServerFn(submitConditionEvent);
   const refreshConditions = useServerFn(getCurrentConditions);
+  const { releaseId, snapshot: initialSnapshot } = Route.useLoaderData();
   const { refresh, snapshot, status } = useCurrentConditionsSync(
-    Route.useLoaderData(),
-    sampleRelease.manifest.releaseId,
-    () => refreshConditions({ data: { releaseId: sampleRelease.manifest.releaseId } }),
+    initialSnapshot,
+    releaseId,
+    () => refreshConditions({ data: { releaseId } }),
   );
 
   function reconcileObstacle(_result: PersistedObstacleResult) {
@@ -47,12 +56,16 @@ function CommunityConditions() {
       </section>
       <CommunityConditionsPanel
         onSaved={reconcileObstacle}
-        submitObstacle={(submission: ObstacleSubmission) => submitObstacle({ data: submission })}
+        submitObstacle={(submission: ObstacleSubmission) => submitObstacle({
+          data: { releaseId, submission },
+        })}
       />
       <ConditionLifecyclePanel
         conditions={snapshot.conditions}
         onSaved={reconcileEvent}
-        submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({ data: submission })}
+        submitConditionEvent={(submission: ConditionEventSubmission) => submitEvent({
+          data: { releaseId, submission },
+        })}
       />
       <CurrentConditionsLiveStatus status={status} />
       <UnmatchedObservations observations={snapshot.unmatchedObservations} />

@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import { closeCurrentConditionsStore, listCurrentConditions, listCurrentConditionsSnapshot, persistConditionEvent, persistObstacle } from "../src/server/current-conditions-store.server.js";
+import {
+  closeCurrentConditionsStore,
+  listCurrentConditions,
+  listCurrentConditionsSnapshot,
+  persistConditionEvent,
+  persistObstacle,
+  prepareBaselineRelease,
+} from "../src/server/current-conditions-store.server.js";
 
 const connectionString = process.env.DATABASE_URL;
 const describePostgis = connectionString ? describe : describe.skip;
@@ -21,21 +28,75 @@ const segments = [
   { id: "farther", geometry: { type: "LineString" as const, coordinates: [[5.371, 43.29], [5.3711, 43.29]] as [number, number][] } },
 ];
 
+async function prepare(policy: ReturnType<typeof policyFor>) {
+  await prepareBaselineRelease({
+    releaseId: policy.baselineReleaseId,
+    segmentsArtifactSha256: "a".repeat(64),
+    expectedEligibleSegmentCount: segments.length,
+    segments,
+  });
+}
+
 afterAll(async () => {
   await closeCurrentConditionsStore();
   await database?.end();
 });
 
 describePostgis("PostGIS current-condition persistence", () => {
+  it("rejects an observation for an unprepared release", async () => {
+    const policy = policyFor(`current-conditions-unprepared-${randomUUID()}`);
+
+    await expect(persistObstacle({
+      category: "blocked-path",
+      description: "Temporary construction barrier narrows the pavement.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    }, policy)).rejects.toThrow("has not been prepared for Community Conditions");
+  });
+
+  it("records a verified release artifact identity and expected eligible segment count", async () => {
+    const policy = policyFor(`current-conditions-prepared-${randomUUID()}`);
+    await expect(prepareBaselineRelease({
+      releaseId: policy.baselineReleaseId,
+      segmentsArtifactSha256: "a".repeat(64),
+      expectedEligibleSegmentCount: segments.length + 1,
+      segments,
+    })).rejects.toThrow("does not match the expected eligible segment count");
+    await prepare(policy);
+
+    await expect(database!.query<{
+      segments_artifact_sha256: string;
+      expected_eligible_segment_count: number;
+    }>(
+      `SELECT segments_artifact_sha256, expected_eligible_segment_count
+       FROM prepared_baseline_releases
+       WHERE release_id = $1`,
+      [policy.baselineReleaseId],
+    )).resolves.toMatchObject({
+      rows: [{
+        segments_artifact_sha256: "a".repeat(64),
+        expected_eligible_segment_count: segments.length,
+      }],
+    });
+    await expect(prepareBaselineRelease({
+      releaseId: policy.baselineReleaseId,
+      segmentsArtifactSha256: "b".repeat(64),
+      expectedEligibleSegmentCount: segments.length,
+      segments,
+    })).rejects.toThrow("different artifact identity or segment count");
+  });
+
   it("persists an assigned observation, provenance, and projection", async () => {
     const policy = policyFor(`current-conditions-assigned-${randomUUID()}`);
+    await prepare(policy);
     const result = await persistObstacle({
       category: "blocked-path",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policy);
+    }, policy);
 
     expect(result.assignment.status).toBe("assigned");
     if (result.assignment.status !== "assigned") throw new Error("Expected an assigned observation.");
@@ -70,7 +131,7 @@ describePostgis("PostGIS current-condition persistence", () => {
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policy);
+    }, policy);
     expect(secondResult.assignment.status).toBe("assigned");
 
     const conditions = await listCurrentConditions(policy.baselineReleaseId);
@@ -93,6 +154,7 @@ describePostgis("PostGIS current-condition persistence", () => {
 
   it("publishes only after an assigned observation is committed", async () => {
     const policy = policyFor(`current-conditions-publish-${randomUUID()}`);
+    await prepare(policy);
     const published: string[] = [];
     const publisher = {
       publish: async ({ baselineReleaseId }: { baselineReleaseId: string }) => {
@@ -109,13 +171,14 @@ describePostgis("PostGIS current-condition persistence", () => {
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policy, publisher);
+    }, policy, publisher);
 
     expect(published).toEqual([policy.baselineReleaseId]);
   });
 
   it("keeps a committed observation when live-update publication fails", async () => {
     const policy = policyFor(`current-conditions-publish-failure-${randomUUID()}`);
+    await prepare(policy);
     const diagnostic = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
@@ -125,7 +188,7 @@ describePostgis("PostGIS current-condition persistence", () => {
         latitude: 43.29005,
         longitude: 5.37005,
         observedAt: "2026-10-29",
-      }, segments, policy, { publish: async () => { throw new Error("Realtime unavailable"); } });
+      }, policy, { publish: async () => { throw new Error("Realtime unavailable"); } });
 
       expect(result.assignment.status).toBe("assigned");
       await expect(listCurrentConditions(policy.baselineReleaseId)).resolves.toHaveLength(1);
@@ -137,13 +200,14 @@ describePostgis("PostGIS current-condition persistence", () => {
 
   it("persists an unmatched observation without a projection", async () => {
     const policy = policyFor(`current-conditions-unmatched-${randomUUID()}`);
+    await prepare(policy);
     const result = await persistObstacle({
       category: "step",
       description: "A step blocks this entrance.",
       latitude: 43.291,
       longitude: 5.371,
       observedAt: "2026-10-29",
-    }, segments, policy);
+    }, policy);
 
     expect(result.assignment).toMatchObject({
       status: "unmatched",
@@ -175,13 +239,14 @@ describePostgis("PostGIS current-condition persistence", () => {
 
   it("derives active, resolved, and reopened conditions from immutable event history", async () => {
     const policy = policyFor(`current-conditions-lifecycle-${randomUUID()}`);
+    await prepare(policy);
     const obstacle = await persistObstacle({
       category: "blocked-path",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policy);
+    }, policy);
     if (obstacle.assignment.status !== "assigned") throw new Error("Expected an assigned obstacle.");
 
     const resolution = await persistConditionEvent({
@@ -216,13 +281,14 @@ describePostgis("PostGIS current-condition persistence", () => {
 
   it("rejects invalid lifecycle transitions without changing the projection", async () => {
     const policy = policyFor(`current-conditions-invalid-lifecycle-${randomUUID()}`);
+    await prepare(policy);
     const obstacle = await persistObstacle({
       category: "step",
       description: "A step blocks this entrance.",
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policy);
+    }, policy);
 
     await expect(persistConditionEvent({
       eventType: "reopening",
@@ -243,13 +309,14 @@ describePostgis("PostGIS current-condition persistence", () => {
 
   it("serializes concurrent transitions for the same obstacle", async () => {
     const policy = policyFor(`current-conditions-concurrent-lifecycle-${randomUUID()}`);
+    await prepare(policy);
     const obstacle = await persistObstacle({
       category: "blocked-path",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policy);
+    }, policy);
     const resolution = {
       eventType: "resolution" as const,
       obstacleObservationId: obstacle.observation.id,
@@ -271,13 +338,15 @@ describePostgis("PostGIS current-condition persistence", () => {
   });
 
   it("rejects mutation of a persisted obstacle observation", async () => {
+    const policy = policyFor(`current-conditions-immutable-${randomUUID()}`);
+    await prepare(policy);
     const result = await persistObstacle({
       category: "surface-hazard",
       description: "Loose paving creates a trip hazard.",
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-10-29",
-    }, segments, policyFor(`current-conditions-immutable-${randomUUID()}`));
+    }, policy);
 
     await expect(database!.query(
       "UPDATE condition_observations SET description = 'Changed' WHERE id = $1",
