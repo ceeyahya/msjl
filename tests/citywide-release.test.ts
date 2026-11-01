@@ -116,7 +116,7 @@ describe("build-citywide-release", () => {
         encoding: "utf8",
       });
       const manifest = JSON.parse(await readFile(join(outputPath, "manifest.json"), "utf8")) as {
-        artifacts: { mapSegments?: { path: string }; mapTiles?: { path: string }; segmentDetails?: { path: string } };
+        artifacts: { mapSegments?: { path: string }; mapTiles?: { path: string }; segmentDetails?: { path: string }; segmentIndex?: { path: string } };
         sources: unknown;
       };
       const sources = JSON.parse(await readFile(join(outputPath, "sources.json"), "utf8")) as Array<{ version: string }>;
@@ -125,8 +125,9 @@ describe("build-citywide-release", () => {
       expect(output).toContain("marseille-test-2026-10-30");
       expect(validationOutput).toContain("6 segments");
       expect(manifest.artifacts.mapSegments?.path).toBe("map-segments.geojson");
-       expect(manifest.artifacts.mapTiles?.path).toBe("tiles.json");
-       expect(manifest.artifacts.segmentDetails?.path).toBe("segment-details.json");
+        expect(manifest.artifacts.mapTiles?.path).toBe("tiles.json");
+        expect(manifest.artifacts.segmentDetails?.path).toBe("segment-details.json");
+        expect(manifest.artifacts.segmentIndex?.path).toBe("segment-index.json");
        expect((await readdir(join(outputPath, "segment-details"))).filter((file) => file.endsWith(".json"))).toHaveLength(256);
       expect(mapArtifact.features).toHaveLength(6);
       expect(sources[0]?.version).toMatch(/^osm-[a-f0-9]{64}$/u);

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from "maplibre-gl";
 import type { FeatureCollection, LineString } from "geojson";
 
+import type { CitywideEvidenceStatus, CitywideScoreBand } from "../citywide-segment-filter.js";
 import type { ReleaseSegment } from "../release.js";
 
 const basemapStyle: StyleSpecification = {
@@ -24,15 +25,43 @@ function conditionFeatures(segments: ReleaseSegment[]): FeatureCollection<LineSt
   };
 }
 
+function layerFilters(profileKey: string, scoreBand: CitywideScoreBand, evidenceStatus: CitywideEvidenceStatus) {
+  const sufficient = `${profileKey}Sufficient`;
+  const score = `${profileKey}Score`;
+  const scored = ["==", ["get", sufficient], true];
+  const insufficient = ["!=", ["get", sufficient], true];
+  const hiddenScored = ["all", scored, ["!=", ["get", sufficient], true]];
+  const hiddenInsufficient = ["all", insufficient, ["==", ["get", sufficient], true]];
+
+  if (evidenceStatus === "insufficient") return { scored: hiddenScored, insufficient };
+  if (evidenceStatus === "scored") return { scored: scoreBandFilter(scored, score, scoreBand), insufficient: hiddenInsufficient };
+  return { scored: scoreBandFilter(scored, score, scoreBand), insufficient };
+}
+
+function scoreBandFilter(scored: unknown[], score: string, scoreBand: CitywideScoreBand): unknown[] {
+  if (scoreBand === "all") return scored;
+  if (scoreBand === "high") return ["all", scored, [">=", ["get", score], 0.75]];
+  if (scoreBand === "medium") return ["all", scored, [">=", ["get", score], 0.5], ["<", ["get", score], 0.75]];
+  return ["all", scored, ["<", ["get", score], 0.5]];
+}
+
+function scoreColor(profileKey: string) {
+  return ["interpolate", ["linear"], ["get", `${profileKey}Score`], 0, "#9f1239", 0.5, "#d97706", 1, "#0f766e"];
+}
+
 export function CitywideLocalAccessibilityMap({
   conditionSegments,
+  evidenceStatus,
   onSelectSegment,
   profileKey,
+  scoreBand,
   tileSource,
 }: {
   conditionSegments: ReleaseSegment[];
+  evidenceStatus: CitywideEvidenceStatus;
   onSelectSegment: (segmentId: string) => void;
   profileKey: string;
+  scoreBand: CitywideScoreBand;
   tileSource: {
     bounds: [number, number, number, number];
     maxzoom: number;
@@ -44,10 +73,20 @@ export function CitywideLocalAccessibilityMap({
   const map = useRef<MapLibreMap | null>(null);
   const onSelectSegmentRef = useRef(onSelectSegment);
   const conditionSegmentsRef = useRef(conditionSegments);
+  const profileKeyRef = useRef(profileKey);
+  const filtersRef = useRef(layerFilters(profileKey, scoreBand, evidenceStatus));
   const tileSourceKey = JSON.stringify(tileSource);
 
   useEffect(() => { onSelectSegmentRef.current = onSelectSegment; }, [onSelectSegment]);
   useEffect(() => { conditionSegmentsRef.current = conditionSegments; }, [conditionSegments]);
+  useEffect(() => {
+    const filters = layerFilters(profileKey, scoreBand, evidenceStatus);
+    profileKeyRef.current = profileKey;
+    filtersRef.current = filters;
+    map.current?.setFilter("release-segments-scored", filters.scored as never);
+    map.current?.setFilter("release-segments-insufficient", filters.insufficient as never);
+    map.current?.setPaintProperty("release-segments-scored", "line-color", scoreColor(profileKey) as never);
+  }, [evidenceStatus, profileKey, scoreBand]);
 
   useEffect(() => {
     if (!container.current || map.current || !("WebGLRenderingContext" in window)) return;
@@ -71,17 +110,16 @@ export function CitywideLocalAccessibilityMap({
       instance.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
       instance.on("load", () => {
         if (cancelled) return;
-        const sufficient = `${profileKey}Sufficient`;
-        const score = `${profileKey}Score`;
+        const activeProfileKey = profileKeyRef.current;
         instance.addSource("release-segment-tiles", { type: "vector", ...tileSource });
         instance.addLayer({
           id: "release-segments-scored",
           type: "line",
           source: "release-segment-tiles",
           "source-layer": "segments",
-          filter: ["==", ["get", sufficient], true],
+          filter: filtersRef.current.scored as never,
           paint: {
-            "line-color": ["interpolate", ["linear"], ["get", score], 0, "#9f1239", 0.5, "#d97706", 1, "#0f766e"],
+            "line-color": scoreColor(activeProfileKey) as never,
             "line-width": 2.5,
           },
         });
@@ -90,7 +128,7 @@ export function CitywideLocalAccessibilityMap({
           type: "line",
           source: "release-segment-tiles",
           "source-layer": "segments",
-          filter: ["!=", ["get", sufficient], true],
+          filter: filtersRef.current.insufficient as never,
           paint: { "line-color": "#52525b", "line-dasharray": [2, 2], "line-width": 2 },
         });
         instance.addSource("current-conditions", { type: "geojson", data: conditionFeatures(conditionSegmentsRef.current) });
@@ -111,7 +149,7 @@ export function CitywideLocalAccessibilityMap({
       });
     });
     return () => { cancelled = true; map.current?.remove(); map.current = null; };
-  }, [profileKey, tileSourceKey]);
+  }, [tileSourceKey]);
 
   useEffect(() => {
     const source = map.current?.getSource("current-conditions") as GeoJSONSource | undefined;

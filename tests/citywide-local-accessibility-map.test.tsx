@@ -15,6 +15,8 @@ const map = {
     if (event === "load" && typeof handler === "function") handler();
   }),
   remove: vi.fn(),
+  setFilter: vi.fn(),
+  setPaintProperty: vi.fn(),
 };
 const Map = vi.fn(function Map() { return map; });
 const setWorkerUrl = vi.fn();
@@ -43,6 +45,8 @@ afterEach(() => {
   map.getSource.mockClear();
   map.on.mockClear();
   map.remove.mockClear();
+  map.setFilter.mockClear();
+  map.setPaintProperty.mockClear();
   conditionSource.setData.mockClear();
   vi.unstubAllGlobals();
 });
@@ -60,8 +64,10 @@ describe("CitywideLocalAccessibilityMap", () => {
     const { rerender } = render(
       <CitywideLocalAccessibilityMap
         conditionSegments={[]}
+        evidenceStatus="all"
         onSelectSegment={() => undefined}
         profileKey="wheelchair"
+        scoreBand="all"
         tileSource={{
           tiles: ["https://assets.example/releases/marseille/tiles/{z}/{x}/{y}.pbf"],
           minzoom: 10,
@@ -93,8 +99,10 @@ describe("CitywideLocalAccessibilityMap", () => {
     rerender(
       <CitywideLocalAccessibilityMap
         conditionSegments={[segment]}
+        evidenceStatus="all"
         onSelectSegment={() => undefined}
         profileKey="wheelchair"
+        scoreBand="all"
         tileSource={{
           tiles: ["https://assets.example/releases/marseille/tiles/{z}/{x}/{y}.pbf"],
           minzoom: 10,
@@ -108,6 +116,32 @@ describe("CitywideLocalAccessibilityMap", () => {
     expect(Map).toHaveBeenCalledTimes(1);
     const overlay = conditionSource.setData.mock.calls.at(-1)?.[0] as { features: Array<{ properties: { id: string } }> };
     expect(overlay.features[0]?.properties.id).toBe("osm-way-100-0001");
+  });
+
+  it("updates the map layers for the selected profile and filters without recreating the map", async () => {
+    Object.defineProperty(window, "WebGLRenderingContext", { configurable: true, value: class {} });
+    const tileSource = {
+      tiles: ["https://assets.example/releases/marseille/tiles/{z}/{x}/{y}.pbf"],
+      minzoom: 10,
+      maxzoom: 15,
+      bounds: [5.19, 43.16, 5.61, 43.49] as [number, number, number, number],
+    };
+    const { rerender } = render(
+      <CitywideLocalAccessibilityMap conditionSegments={[]} evidenceStatus="all" onSelectSegment={() => undefined} profileKey="wheelchair" scoreBand="all" tileSource={tileSource} />,
+    );
+
+    await waitFor(() => expect(Map).toHaveBeenCalledTimes(1));
+    rerender(
+      <CitywideLocalAccessibilityMap conditionSegments={[]} evidenceStatus="scored" onSelectSegment={() => undefined} profileKey="cane" scoreBand="high" tileSource={tileSource} />,
+    );
+
+    await waitFor(() => expect(map.setFilter).toHaveBeenCalledWith("release-segments-scored", [
+      "all", ["==", ["get", "caneSufficient"], true], [">=", ["get", "caneScore"], 0.75],
+    ]));
+    expect(map.setPaintProperty).toHaveBeenCalledWith("release-segments-scored", "line-color", [
+      "interpolate", ["linear"], ["get", "caneScore"], 0, "#9f1239", 0.5, "#d97706", 1, "#0f766e",
+    ]);
+    expect(Map).toHaveBeenCalledTimes(1);
   });
 
   it("loads only the selected segment detail from a published release", async () => {

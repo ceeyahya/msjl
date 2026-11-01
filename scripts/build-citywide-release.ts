@@ -60,24 +60,30 @@ async function writeArtifact(directory: string, path: string, value: unknown): P
   return { path, sha256: checksum(content) };
 }
 
-function mapArtifact(segments: ReturnType<typeof buildCitywideSegments>, config: LocalAccessibilityConfig) {
-  return {
-    type: "FeatureCollection",
-    features: segments.map((segment) => ({
-      type: "Feature",
-      properties: {
-        id: segment.id,
-        profiles: Object.fromEntries(Object.keys(config.profiles).map((profileKey) => {
-          const profile = scoreSegment(segment, config, profileKey).profile;
-          return [profileKey, {
-            coverage: profile.coverage,
-            score: profile.score ?? null,
-            sufficient: profile.sufficient,
-          }];
-        })),
-      },
-      geometry: segment.geometry,
+function mapArtifacts(segments: ReturnType<typeof buildCitywideSegments>, config: LocalAccessibilityConfig) {
+  const summaries = segments.map((segment) => ({
+    id: segment.id,
+    geometry: segment.geometry,
+    profiles: Object.fromEntries(Object.keys(config.profiles).map((profileKey) => {
+      const profile = scoreSegment(segment, config, profileKey).profile;
+      return [profileKey, { coverage: profile.coverage, score: profile.score ?? null, sufficient: profile.sufficient }];
     })),
+  }));
+  return {
+    mapSegments: {
+      type: "FeatureCollection",
+      features: summaries.map(({ id, geometry, profiles }) => ({ type: "Feature", properties: { id, profiles }, geometry })),
+    },
+    segmentIndex: {
+      schemaVersion: 1,
+      segments: summaries.map(({ id, profiles }) => ({
+        id,
+        profiles: Object.fromEntries(Object.entries(profiles).map(([profileKey, profile]) => [profileKey, {
+          score: profile.score,
+          sufficient: profile.sufficient,
+        }])),
+      })),
+    },
   };
 }
 
@@ -199,6 +205,7 @@ const sources: ReleaseSource[] = [{
   version: `osm-${checksum(inputContent)}`,
   licence: "ODbL-1.0",
 }];
+const mapArtifactValues = mapArtifacts(segments, config);
 const artifacts = {
   config: await writeArtifact(outputDirectory, "config.json", config),
   sources: await writeArtifact(outputDirectory, "sources.json", sources),
@@ -210,10 +217,11 @@ const artifacts = {
       geometry: segment.geometry,
     })),
   }),
-  mapSegments: await writeArtifact(outputDirectory, "map-segments.geojson", mapArtifact(segments, config)),
-  mapTiles: await writeMapTiles(outputDirectory, segments, config),
-  segmentDetails: await writeSegmentDetails(outputDirectory, segments),
-};
+  mapSegments: await writeArtifact(outputDirectory, "map-segments.geojson", mapArtifactValues.mapSegments),
+    mapTiles: await writeMapTiles(outputDirectory, segments, config),
+    segmentDetails: await writeSegmentDetails(outputDirectory, segments),
+  segmentIndex: await writeArtifact(outputDirectory, "segment-index.json", mapArtifactValues.segmentIndex),
+  };
 const manifest = {
   schemaVersion: 1 as const,
   releaseId,

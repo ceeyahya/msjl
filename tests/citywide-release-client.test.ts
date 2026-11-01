@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { loadCitywideReleaseFromPointer, loadCitywideSegment } from "../src/citywide-release-client.js";
+import { loadCitywideReleaseFromPointer, loadCitywideSegment, loadCitywideSegmentIndex } from "../src/citywide-release-client.js";
 
 const config = {
   version: "1.0.0",
@@ -21,6 +21,7 @@ const releaseArtifacts = {
     sources: { path: "sources.json" },
     mapTiles: { path: "tiles.json" },
     segmentDetails: { path: "segment-details.json" },
+    segmentIndex: { path: "segment-index.json" },
   },
 };
 
@@ -56,6 +57,31 @@ describe("loadCitywideReleaseFromPointer", () => {
       `${releaseBaseUrl}/sources.json`,
       `${releaseBaseUrl}/tiles.json`,
       `${releaseBaseUrl}/segment-details.json`,
+    ]);
+  });
+
+  it("loads compact segment summaries for non-map exploration", async () => {
+    const pointerUrl = "https://data.example.org/local-accessibility/current.json";
+    const releaseBaseUrl = "https://data.example.org/local-accessibility/releases/marseille-2026-10-31";
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url === pointerUrl) return jsonResponse({ schemaVersion: 1, releaseId: "marseille-2026-10-31", baseUrl: "./releases/marseille-2026-10-31/" });
+      if (url === `${releaseBaseUrl}/manifest.json`) return jsonResponse(releaseArtifacts);
+      if (url === `${releaseBaseUrl}/config.json`) return jsonResponse(config);
+      if (url === `${releaseBaseUrl}/sources.json`) return jsonResponse([]);
+      if (url === `${releaseBaseUrl}/tiles.json`) return jsonResponse({ tiles: ["tiles/{z}/{x}/{y}.pbf"], minzoom: 10, maxzoom: 15, bounds: [5.19, 43.16, 5.61, 43.49] });
+      if (url === `${releaseBaseUrl}/segment-details.json`) return jsonResponse({ shardCount: 256, template: "segment-details/{shard}.json" });
+      if (url === `${releaseBaseUrl}/segment-index.json`) return jsonResponse({
+        schemaVersion: 1,
+        segments: [{ id: "segment-1", profiles: { wheelchair: { score: 0.8, sufficient: true } } }],
+      });
+      throw new Error(`Unexpected URL ${url}`);
+    }));
+
+    const release = await loadCitywideReleaseFromPointer(pointerUrl);
+
+    await expect(loadCitywideSegmentIndex(release)).resolves.toEqual([
+      { id: "segment-1", profiles: { wheelchair: { score: 0.8, sufficient: true } } },
     ]);
   });
 

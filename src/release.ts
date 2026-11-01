@@ -12,6 +12,7 @@ export interface ReleaseManifest {
     mapSegments?: ReleaseArtifact;
     mapTiles?: ReleaseArtifact;
     segmentDetails?: ReleaseArtifact;
+    segmentIndex?: ReleaseArtifact;
   };
 }
 
@@ -142,7 +143,7 @@ export function validateRelease(value: unknown): LocalAccessibilityRelease {
       fail(`manifest ${name} artifact requires a SHA-256 checksum`);
     }
   }
-  for (const name of ["mapSegments", "mapTiles", "segmentDetails"] as const) {
+  for (const name of ["mapSegments", "mapTiles", "segmentDetails", "segmentIndex"] as const) {
     if (manifest.artifacts[name] !== undefined) {
       assertRecord(manifest.artifacts[name], `manifest ${name} artifact must be an object`);
       assertText(manifest.artifacts[name].path, `manifest ${name} artifact requires a path`);

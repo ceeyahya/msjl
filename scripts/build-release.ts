@@ -57,7 +57,7 @@ export async function buildRelease(directory: string): Promise<LocalAccessibilit
   const sources = await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, "sources"));
   const segmentGeoJson = await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, "segments"));
   if (isRecord(manifest) && isRecord(manifest.artifacts)) {
-    for (const name of ["mapSegments", "mapTiles", "segmentDetails"]) {
+    for (const name of ["mapSegments", "mapTiles", "segmentDetails", "segmentIndex"]) {
       if (manifest.artifacts[name] !== undefined) await readVerifiedJson(releaseDirectory, artifactFromManifest(manifest, name));
     }
   }

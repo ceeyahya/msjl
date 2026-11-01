@@ -17,6 +17,11 @@ export interface CitywideRelease {
   detailTemplate: string;
 }
 
+export interface CitywideSegmentSummary {
+  id: string;
+  profiles: Record<string, { score: number | null; sufficient: boolean }>;
+}
+
 function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/u, "")}/${path}`;
 }
@@ -115,4 +120,35 @@ export async function loadCitywideSegment(release: CitywideRelease, segmentId: s
     throw new Error(`The citywide release detail for ${segmentId} is invalid.`);
   }
   return segment as unknown as ReleaseSegment;
+}
+
+function segmentSummariesFrom(value: unknown, profileKeys: readonly string[]): CitywideSegmentSummary[] {
+  const segments = isRecord(value) && value.schemaVersion === 1 && Array.isArray(value.segments)
+    ? value.segments
+    : isRecord(value) && value.type === "FeatureCollection" && Array.isArray(value.features)
+      ? value.features.map((feature) => isRecord(feature) ? feature.properties : undefined)
+      : undefined;
+  if (!segments) throw new Error("The citywide release segment index is invalid.");
+
+  return segments.map((segment): CitywideSegmentSummary => {
+    if (!isRecord(segment) || typeof segment.id !== "string" || !isRecord(segment.profiles)) {
+      throw new Error("The citywide release segment index is invalid.");
+    }
+    const profileValues: Record<string, unknown> = segment.profiles;
+    const profiles = Object.fromEntries(profileKeys.map((profileKey) => {
+      const profile = profileValues[profileKey];
+      if (!isRecord(profile) || typeof profile.sufficient !== "boolean" || (profile.score !== null && (typeof profile.score !== "number" || !Number.isFinite(profile.score) || profile.score < 0 || profile.score > 1))) {
+        throw new Error("The citywide release segment index is invalid.");
+      }
+      return [profileKey, { score: profile.score as number | null, sufficient: profile.sufficient }];
+    }));
+    return { id: segment.id, profiles };
+  });
+}
+
+export async function loadCitywideSegmentIndex(release: CitywideRelease): Promise<CitywideSegmentSummary[]> {
+  const artifact = release.manifest.artifacts.segmentIndex ?? release.manifest.artifacts.mapSegments;
+  if (!artifact) throw new Error("The citywide release does not provide a segment index for non-map exploration.");
+  const value = await readJson(joinUrl(release.baseUrl, artifact.path));
+  return segmentSummariesFrom(value, Object.keys(release.config.profiles));
 }
