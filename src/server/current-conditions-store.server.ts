@@ -4,19 +4,29 @@ import { Pool, type PoolClient } from "pg";
 import type {
   AssignedObservation,
   ConditionEventSubmission,
+  CurrentConditionImpact,
   CurrentCondition,
   CurrentConditionPolicy,
   CurrentConditionProjection,
-  EligibleSegment,
+  EffectiveCurrentResult,
   ObstacleSubmission,
+  ObstacleSeverity,
   PersistedConditionEventResult,
   PersistedObstacleResult,
   CurrentConditionsSnapshot,
   UnmatchedConditionObservation,
   UnmatchedObservation,
 } from "../current-conditions.js";
+import { categorySeverityImpact, categorySeverityPolicy, validateObstacleSubmission } from "../current-conditions.js";
 import { currentConditionsChangePublisher } from "../current-conditions-change-feed.server.js";
 import type { CurrentConditionsChangePublisher } from "../current-conditions-change-feed.js";
+import {
+  deriveEffectiveCurrentScore,
+  scoreSegment,
+  type LocalAccessibilityConfig,
+  type SegmentScore,
+} from "../scoring.js";
+import type { ReleaseSegment } from "../release.js";
 
 let pool: Pool | undefined;
 
@@ -51,8 +61,30 @@ function getPool(): Pool {
 export interface PreparedBaselineRelease {
   releaseId: string;
   segmentsArtifactSha256: string;
+  configArtifactSha256: string;
+  config: LocalAccessibilityConfig;
   expectedEligibleSegmentCount: number;
-  segments: EligibleSegment[];
+  segments: ReleaseSegment[];
+}
+
+async function storeBaselineScores(client: PoolClient, release: PreparedBaselineRelease): Promise<void> {
+  const config = release.config;
+  await client.query("DELETE FROM prepared_baseline_scores WHERE release_id = $1", [release.releaseId]);
+  const scores = Object.entries(config.profiles).flatMap(([profileKey]) => release.segments.map((segment) => ({
+    segment_id: segment.id,
+    profile_key: profileKey,
+    baseline_score: scoreSegment(segment, config, profileKey),
+  })));
+
+  for (let offset = 0; offset < scores.length; offset += 500) {
+    const batch = scores.slice(offset, offset + 500);
+    await client.query(
+      `INSERT INTO prepared_baseline_scores (release_id, segment_id, profile_key, baseline_score)
+       SELECT $1, score.segment_id, score.profile_key, score.baseline_score
+       FROM jsonb_to_recordset($2::jsonb) AS score(segment_id text, profile_key text, baseline_score jsonb)`,
+      [release.releaseId, JSON.stringify(batch)],
+    );
+  }
 }
 
 async function requirePreparedBaselineRelease(
@@ -79,8 +111,9 @@ export async function prepareBaselineRelease(release: PreparedBaselineRelease): 
     const existing = await client.query<{
       segments_artifact_sha256: string;
       expected_eligible_segment_count: number;
+      config_artifact_sha256: string | null;
     }>(
-      `SELECT segments_artifact_sha256, expected_eligible_segment_count
+      `SELECT segments_artifact_sha256, expected_eligible_segment_count, config_artifact_sha256
        FROM prepared_baseline_releases
        WHERE release_id = $1`,
       [release.releaseId],
@@ -90,6 +123,30 @@ export async function prepareBaselineRelease(release: PreparedBaselineRelease): 
       if (prepared.segments_artifact_sha256 !== release.segmentsArtifactSha256
         || prepared.expected_eligible_segment_count !== release.expectedEligibleSegmentCount) {
         throw new Error("Baseline release is already prepared with a different artifact identity or segment count.");
+      }
+      if (prepared.config_artifact_sha256 && prepared.config_artifact_sha256 !== release.configArtifactSha256) {
+        throw new Error("Baseline release is already prepared with a different scoring configuration identity.");
+      }
+      await client.query(
+        `UPDATE prepared_baseline_releases
+         SET config_artifact_sha256 = $2, baseline_config = $3::jsonb
+         WHERE release_id = $1`,
+        [release.releaseId, release.configArtifactSha256, JSON.stringify(release.config)],
+      );
+      await storeBaselineScores(client, release);
+      const projections = await client.query<{ segment_id: string }>(
+        "SELECT segment_id FROM condition_projections WHERE release_id = $1",
+        [release.releaseId],
+      );
+      const updatedAt = new Date().toISOString();
+      for (const projection of projections.rows) {
+        await refreshProjection(client, release.releaseId, projection.segment_id, {
+          assignmentThresholdMetres: 15,
+          baselineReleaseId: release.releaseId,
+          eligibilityRuleVersion: "conservative-pedestrian-network-v1",
+          localInfluenceMetres: 0,
+          impactPolicy: categorySeverityPolicy,
+        }, updatedAt);
       }
       await client.query("COMMIT");
       return;
@@ -123,10 +180,11 @@ export async function prepareBaselineRelease(release: PreparedBaselineRelease): 
     }
     await client.query(
       `INSERT INTO prepared_baseline_releases (
-        release_id, segments_artifact_sha256, expected_eligible_segment_count
-      ) VALUES ($1, $2, $3)`,
-      [release.releaseId, release.segmentsArtifactSha256, release.expectedEligibleSegmentCount],
+        release_id, segments_artifact_sha256, expected_eligible_segment_count, config_artifact_sha256, baseline_config
+      ) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [release.releaseId, release.segmentsArtifactSha256, release.expectedEligibleSegmentCount, release.configArtifactSha256, JSON.stringify(release.config)],
     );
+    await storeBaselineScores(client, release);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -146,8 +204,14 @@ async function refreshProjection(
 ): Promise<CurrentConditionProjection> {
   // Serialize every writer for a segment before deriving its event-based projection.
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [releaseId, segmentId]);
-  const activeObstacles = await client.query<{ id: string }>(
-    `SELECT obstacle.id
+  const activeObstacles = await client.query<{
+    id: string;
+    category: CurrentCondition["observations"][number]["category"];
+    severity: ObstacleSeverity | null;
+    impact_policy_version: string | null;
+    impact: number | null;
+  }>(
+    `SELECT obstacle.id, obstacle.category, obstacle.severity, obstacle.impact_policy_version, obstacle.impact
      FROM condition_observations AS obstacle
      JOIN observation_assignments AS assignment ON assignment.observation_id = obstacle.id
      LEFT JOIN LATERAL (
@@ -166,28 +230,67 @@ async function refreshProjection(
     [releaseId, segmentId],
   );
   const activeObservationIds = activeObstacles.rows.map((obstacle) => obstacle.id);
+  const impactBreakdown = activeObstacles.rows.map((obstacle): CurrentConditionImpact => ({
+    observationId: obstacle.id,
+    category: obstacle.category,
+    ...(obstacle.severity ? { severity: obstacle.severity } : {}),
+    ...(obstacle.impact_policy_version ? { policyVersion: obstacle.impact_policy_version } : {}),
+    ...(obstacle.impact === null ? {} : { dimension: "physical" }),
+    impact: obstacle.impact ?? 0,
+  }));
+  const baselineScores = await client.query<{
+    profile_key: string;
+    baseline_score: SegmentScore;
+    baseline_config: LocalAccessibilityConfig | null;
+  }>(
+    `SELECT scores.profile_key, scores.baseline_score, prepared.baseline_config
+     FROM prepared_baseline_scores AS scores
+     JOIN prepared_baseline_releases AS prepared ON prepared.release_id = scores.release_id
+     WHERE scores.release_id = $1 AND scores.segment_id = $2`,
+    [releaseId, segmentId],
+  );
+  const effectiveResults = Object.fromEntries(baselineScores.rows.flatMap((row) => {
+    if (!row.baseline_config) return [];
+    const effective = deriveEffectiveCurrentScore(row.baseline_score, row.baseline_config, row.profile_key, impactBreakdown);
+    const result: EffectiveCurrentResult = {
+      available: effective.available,
+      ...(effective.reason ? { reason: effective.reason } : {}),
+      ...(effective.profile.score === undefined ? {} : { score: effective.profile.score }),
+      coverage: effective.profile.coverage,
+      sufficient: effective.profile.sufficient,
+      dimensions: Object.fromEntries(Object.entries(effective.dimensions).map(([key, dimension]) => [key, {
+        ...(dimension.baselineBarrier === undefined ? {} : { baselineBarrier: dimension.baselineBarrier }),
+        ...(dimension.effectiveBarrier === undefined ? {} : { effectiveBarrier: dimension.effectiveBarrier }),
+      }])),
+    };
+    return [[row.profile_key, result]];
+  }));
   const projection: CurrentConditionProjection = {
     active: activeObservationIds.length > 0,
     condition: "reported-obstacle",
     label: "Provisional community-derived condition",
-    policyVersion: policy.projectionPolicyVersion,
+    policyVersion: policy.impactPolicy.version,
     baselineReleaseId: releaseId,
     segmentId,
     localInfluenceMetres: policy.localInfluenceMetres,
+    impactBreakdown,
+    effectiveResults,
   };
 
   await client.query(
     `INSERT INTO condition_projections (
-      id, release_id, segment_id, condition, label, policy_version, local_influence_metres, active, active_observation_ids, updated_at
-    ) VALUES ($1, $2, $3, 'reported-obstacle', $4, $5, $6, $7, $8::uuid[], $9)
+       id, release_id, segment_id, condition, label, policy_version, local_influence_metres, active, active_observation_ids, impact_breakdown, effective_results, updated_at
+     ) VALUES ($1, $2, $3, 'reported-obstacle', $4, $5, $6, $7, $8::uuid[], $9::jsonb, $10::jsonb, $11)
     ON CONFLICT (release_id, segment_id) DO UPDATE SET
       condition = EXCLUDED.condition,
       label = EXCLUDED.label,
       policy_version = EXCLUDED.policy_version,
       local_influence_metres = EXCLUDED.local_influence_metres,
-      active = EXCLUDED.active,
-      active_observation_ids = EXCLUDED.active_observation_ids,
-      updated_at = EXCLUDED.updated_at`,
+       active = EXCLUDED.active,
+       active_observation_ids = EXCLUDED.active_observation_ids,
+       impact_breakdown = EXCLUDED.impact_breakdown,
+       effective_results = EXCLUDED.effective_results,
+       updated_at = EXCLUDED.updated_at`,
     [
       randomUUID(),
       releaseId,
@@ -197,6 +300,8 @@ async function refreshProjection(
       projection.localInfluenceMetres,
       projection.active,
       activeObservationIds,
+      JSON.stringify(projection.impactBreakdown),
+      JSON.stringify(projection.effectiveResults),
       updatedAt,
     ],
   );
@@ -205,27 +310,32 @@ async function refreshProjection(
 }
 
 export async function persistObstacle(
-  submission: ObstacleSubmission,
+  input: ObstacleSubmission,
   policy: CurrentConditionPolicy,
   publisher: CurrentConditionsChangePublisher = currentConditionsChangePublisher,
 ): Promise<PersistedObstacleResult> {
+  const submission = validateObstacleSubmission(input);
   const client = await getPool().connect();
   const observationId = randomUUID();
   const recordedAt = new Date().toISOString();
+  const impact = categorySeverityImpact(policy.impactPolicy, observationId, submission.category, submission.severity);
 
   try {
     await client.query("BEGIN");
     await requirePreparedBaselineRelease(client, policy.baselineReleaseId);
     await client.query(
       `INSERT INTO condition_observations (
-        id, release_id, event_type, category, description, observed_at, recorded_at, location
-      ) VALUES (
-        $1, $2, 'obstacle', $3, $4, $5, $6, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography
-      )`,
+          id, release_id, event_type, category, severity, impact_policy_version, impact, description, observed_at, recorded_at, location
+        ) VALUES (
+          $1, $2, 'obstacle', $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_MakePoint($9, $10), 4326)::geography
+        )`,
       [
         observationId,
         policy.baselineReleaseId,
         submission.category,
+        submission.severity ?? null,
+        impact.impact === 0 ? null : policy.impactPolicy.version,
+        impact.impact === 0 ? null : impact.impact,
         submission.description,
         submission.observedAt,
         recordedAt,
@@ -319,12 +429,13 @@ export async function persistConditionEvent(
     // The target obstacle defines the lifecycle stream, so only one transition can validate it at a time.
     await client.query("SELECT pg_advisory_xact_lock(0, hashtext($1))", [submission.obstacleObservationId]);
     const target = await client.query<{
-      category: CurrentCondition["observations"][number]["category"];
+       category: CurrentCondition["observations"][number]["category"];
+       severity: ObstacleSeverity | null;
       release_id: string;
       segment_id: string;
       latest_event_type: "resolution" | "reopening" | null;
     }>(
-      `SELECT obstacle.category, assignment.release_id, assignment.segment_id,
+      `SELECT obstacle.category, obstacle.severity, assignment.release_id, assignment.segment_id,
         latest_event.event_type AS latest_event_type
        FROM condition_observations AS obstacle
        JOIN observation_assignments AS assignment ON assignment.observation_id = obstacle.id
@@ -356,8 +467,8 @@ export async function persistConditionEvent(
 
     await client.query(
       `INSERT INTO condition_observations (
-        id, release_id, event_type, category, description, observed_at, recorded_at, location, related_observation_id
-      ) SELECT $1, release_id, $2, category, $3, $4, $5, location, id
+         id, release_id, event_type, category, severity, description, observed_at, recorded_at, location, related_observation_id
+       ) SELECT $1, release_id, $2, category, severity, $3, $4, $5, location, id
         FROM condition_observations
         WHERE id = $6`,
       [observationId, submission.eventType, submission.description, submission.observedAt, recordedAt, submission.obstacleObservationId],
@@ -370,6 +481,7 @@ export async function persistConditionEvent(
       observation: {
         id: observationId,
         category: obstacle.category,
+        ...(obstacle.severity ? { severity: obstacle.severity } : {}),
         description: submission.description,
         eventType: submission.eventType,
         observedAt: submission.observedAt,
@@ -398,10 +510,13 @@ export async function listCurrentConditions(releaseId: string): Promise<CurrentC
     condition: "reported-obstacle";
     active: boolean;
     label: "Provisional community-derived condition";
-    policy_version: string;
-    local_influence_metres: number;
-    id: string;
-    category: CurrentCondition["observations"][number]["category"];
+     policy_version: string;
+     local_influence_metres: number;
+     impact_breakdown: CurrentConditionImpact[];
+     effective_results: Record<string, EffectiveCurrentResult>;
+     id: string;
+     category: CurrentCondition["observations"][number]["category"];
+     severity: ObstacleSeverity | null;
     description: string;
     observed_at: string;
     recorded_at: string;
@@ -413,10 +528,13 @@ export async function listCurrentConditions(releaseId: string): Promise<CurrentC
       condition_projections.condition,
       condition_projections.active,
       condition_projections.label,
-      condition_projections.policy_version,
-      condition_projections.local_influence_metres,
-      condition_observations.id,
-      condition_observations.category,
+       condition_projections.policy_version,
+       condition_projections.local_influence_metres,
+       condition_projections.impact_breakdown,
+       condition_projections.effective_results,
+       condition_observations.id,
+       condition_observations.category,
+       condition_observations.severity,
       condition_observations.description,
       condition_observations.observed_at::text AS observed_at,
       to_char(condition_observations.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at,
@@ -447,16 +565,19 @@ export async function listCurrentConditions(releaseId: string): Promise<CurrentC
           label: row.label,
           policyVersion: row.policy_version,
           baselineReleaseId: releaseId,
-          segmentId: row.segment_id,
-          localInfluenceMetres: row.local_influence_metres,
+           segmentId: row.segment_id,
+           localInfluenceMetres: row.local_influence_metres,
+           impactBreakdown: row.impact_breakdown,
+           effectiveResults: row.effective_results,
         },
         observations: [],
       };
       conditions.set(row.segment_id, currentCondition);
     }
     currentCondition.observations.push({
-      id: row.id,
-      category: row.category,
+       id: row.id,
+       category: row.category,
+       ...(row.severity ? { severity: row.severity } : {}),
       description: row.description,
       eventType: row.event_type,
       observedAt: row.observed_at,
@@ -474,6 +595,7 @@ export async function listCurrentConditionsSnapshot(releaseId: string): Promise<
     getPool().query<{
       id: string;
       category: UnmatchedConditionObservation["category"];
+      severity: ObstacleSeverity | null;
       description: string;
       latitude: string;
       longitude: string;
@@ -485,6 +607,7 @@ export async function listCurrentConditionsSnapshot(releaseId: string): Promise<
       `SELECT
         condition_observations.id,
         condition_observations.category,
+        condition_observations.severity,
         condition_observations.description,
         ST_Y(condition_observations.location::geometry)::text AS latitude,
         ST_X(condition_observations.location::geometry)::text AS longitude,
@@ -507,6 +630,7 @@ export async function listCurrentConditionsSnapshot(releaseId: string): Promise<
     unmatchedObservations: unmatched.rows.map((observation) => ({
       id: observation.id,
       category: observation.category,
+      ...(observation.severity ? { severity: observation.severity } : {}),
       description: observation.description,
       latitude: Number(observation.latitude),
       longitude: Number(observation.longitude),

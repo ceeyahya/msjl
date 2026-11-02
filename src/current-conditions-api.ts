@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import {
   validateConditionEventSubmission,
   validateObstacleSubmission,
+  categorySeverityPolicy,
   type ConditionEventSubmission,
   type CurrentConditionsSnapshot,
   type ObstacleSubmission,
@@ -34,9 +35,9 @@ function unavailable(error: unknown): never {
 
 const policy = {
   assignmentThresholdMetres: 15,
+  impactPolicy: categorySeverityPolicy,
   eligibilityRuleVersion: "conservative-pedestrian-network-v1",
   localInfluenceMetres: 0,
-  projectionPolicyVersion: "community-condition-v1",
 };
 
 export const submitObstacleObservation = createServerFn({ method: "POST" })

@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
+import type { LocalAccessibilityConfig } from "../src/scoring.js";
+import { categorySeverityPolicy } from "../src/current-conditions.js";
+
 import {
   closeCurrentConditionsStore,
   listCurrentConditions,
@@ -16,22 +19,44 @@ const describePostgis = connectionString ? describe : describe.skip;
 const database = connectionString ? new Pool({ connectionString }) : undefined;
 function policyFor(releaseId: string) {
   return {
-  assignmentThresholdMetres: 15,
+   assignmentThresholdMetres: 15,
+   impactPolicy: categorySeverityPolicy,
   baselineReleaseId: releaseId,
   eligibilityRuleVersion: "conservative-pedestrian-network-v1",
   localInfluenceMetres: 0,
-  projectionPolicyVersion: "community-condition-v1",
   };
 }
 const segments = [
-  { id: "nearest", geometry: { type: "LineString" as const, coordinates: [[5.37, 43.29], [5.3701, 43.29]] as [number, number][] } },
-  { id: "farther", geometry: { type: "LineString" as const, coordinates: [[5.371, 43.29], [5.3711, 43.29]] as [number, number][] } },
+  {
+    id: "nearest",
+    geometry: { type: "LineString" as const, coordinates: [[5.37, 43.29], [5.3701, 43.29]] as [number, number][] },
+    sourceWayIds: ["1"],
+    metrics: { steps: { value: 2, coverage: 1 } },
+    relations: [{ indicator: "steps", sourceId: "test", method: "sampled" as const, confidence: 1 }],
+  },
+  {
+    id: "farther",
+    geometry: { type: "LineString" as const, coordinates: [[5.371, 43.29], [5.3711, 43.29]] as [number, number][] },
+    sourceWayIds: ["2"],
+    metrics: { steps: { value: 2, coverage: 1 } },
+    relations: [{ indicator: "steps", sourceId: "test", method: "sampled" as const, confidence: 1 }],
+  },
 ];
+const config: LocalAccessibilityConfig = {
+  version: "test-v1",
+  formulaVersion: "test-v1",
+  dimensionBarrierCap: 0.9,
+  indicators: { steps: { dimension: "physical", kind: "linear", noProblemAt: 0, totalObstacleAt: 10, weight: 1 } },
+  dimensions: { physical: { minimumCoverage: 1 } },
+  profiles: { wheelchair: { minimumCoverage: 1, weights: { physical: 1 } } },
+};
 
 async function prepare(policy: ReturnType<typeof policyFor>) {
   await prepareBaselineRelease({
     releaseId: policy.baselineReleaseId,
     segmentsArtifactSha256: "a".repeat(64),
+    configArtifactSha256: "c".repeat(64),
+    config,
     expectedEligibleSegmentCount: segments.length,
     segments,
   });
@@ -48,6 +73,7 @@ describePostgis("PostGIS current-condition persistence", () => {
 
     await expect(persistObstacle({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -60,6 +86,8 @@ describePostgis("PostGIS current-condition persistence", () => {
     await expect(prepareBaselineRelease({
       releaseId: policy.baselineReleaseId,
       segmentsArtifactSha256: "a".repeat(64),
+      configArtifactSha256: "c".repeat(64),
+      config,
       expectedEligibleSegmentCount: segments.length + 1,
       segments,
     })).rejects.toThrow("does not match the expected eligible segment count");
@@ -82,6 +110,8 @@ describePostgis("PostGIS current-condition persistence", () => {
     await expect(prepareBaselineRelease({
       releaseId: policy.baselineReleaseId,
       segmentsArtifactSha256: "b".repeat(64),
+      configArtifactSha256: "c".repeat(64),
+      config,
       expectedEligibleSegmentCount: segments.length,
       segments,
     })).rejects.toThrow("different artifact identity or segment count");
@@ -92,6 +122,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     await prepare(policy);
     const result = await persistObstacle({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -127,6 +158,7 @@ describePostgis("PostGIS current-condition persistence", () => {
 
     const secondResult = await persistObstacle({
       category: "surface-hazard",
+      severity: "major-obstruction",
       description: "Loose paving creates a trip hazard.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -136,11 +168,11 @@ describePostgis("PostGIS current-condition persistence", () => {
 
     const conditions = await listCurrentConditions(policy.baselineReleaseId);
     expect(conditions).toHaveLength(1);
-    expect(conditions[0]!.projection).toEqual({
+    expect(conditions[0]!.projection).toMatchObject({
       active: true,
       condition: "reported-obstacle",
       label: "Provisional community-derived condition",
-      policyVersion: "community-condition-v1",
+      policyVersion: "category-severity-v1",
       baselineReleaseId: policy.baselineReleaseId,
       segmentId: "nearest",
       localInfluenceMetres: 0,
@@ -150,6 +182,64 @@ describePostgis("PostGIS current-condition persistence", () => {
       expect.objectContaining({ id: result.observation.id }),
       expect.objectContaining({ id: secondResult.observation.id }),
     ]));
+  });
+
+  it("persists the versioned severity policy evidence and restores it after reopening", async () => {
+    const policy = policyFor(`current-conditions-effective-${randomUUID()}`);
+    await prepare(policy);
+    const obstacle = await persistObstacle({
+      category: "step",
+      severity: "major-obstruction",
+      description: "A step blocks this entrance.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    }, policy);
+    if (!("projection" in obstacle)) throw new Error("Expected an assigned obstacle.");
+
+    expect(obstacle.projection).toMatchObject({
+      policyVersion: "category-severity-v1",
+      impactBreakdown: [{ category: "step", severity: "major-obstruction", dimension: "physical", impact: 0.5 }],
+      effectiveResults: { wheelchair: { available: true, score: 0.4 } },
+    });
+    await expect(database!.query<{
+      severity: string;
+      impact_policy_version: string;
+      observation_impact: string;
+      impact: string;
+      effective_score: string;
+    }>(
+      `SELECT observation.severity, observation.impact_policy_version, observation.impact::text AS observation_impact,
+        projection.impact_breakdown #>> '{0,impact}' AS impact,
+        projection.effective_results #>> '{wheelchair,score}' AS effective_score
+       FROM condition_observations AS observation
+       JOIN condition_projections AS projection
+         ON projection.release_id = observation.release_id
+       WHERE observation.id = $1`,
+      [obstacle.observation.id],
+    )).resolves.toMatchObject({
+      rows: [{
+        severity: "major-obstruction",
+        impact_policy_version: "category-severity-v1",
+        observation_impact: "0.5",
+        impact: "0.5",
+        effective_score: "0.4",
+      }],
+    });
+
+    await persistConditionEvent({
+      eventType: "resolution",
+      obstacleObservationId: obstacle.observation.id,
+      description: "The step is no longer present.",
+      observedAt: "2026-10-30",
+    }, policy);
+    const reopened = await persistConditionEvent({
+      eventType: "reopening",
+      obstacleObservationId: obstacle.observation.id,
+      description: "The step blocks this entrance again.",
+      observedAt: "2026-10-31",
+    }, policy);
+    expect(reopened.projection.effectiveResults).toMatchObject({ wheelchair: { available: true, score: 0.4 } });
   });
 
   it("publishes only after an assigned observation is committed", async () => {
@@ -167,6 +257,7 @@ describePostgis("PostGIS current-condition persistence", () => {
 
     await persistObstacle({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -184,6 +275,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     try {
       const result = await persistObstacle({
         category: "blocked-path",
+        severity: "minor-obstruction",
         description: "Temporary construction barrier narrows the pavement.",
         latitude: 43.29005,
         longitude: 5.37005,
@@ -203,6 +295,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     await prepare(policy);
     const result = await persistObstacle({
       category: "step",
+      severity: "major-obstruction",
       description: "A step blocks this entrance.",
       latitude: 43.291,
       longitude: 5.371,
@@ -242,6 +335,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     await prepare(policy);
     const obstacle = await persistObstacle({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -284,6 +378,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     await prepare(policy);
     const obstacle = await persistObstacle({
       category: "step",
+      severity: "major-obstruction",
       description: "A step blocks this entrance.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -312,6 +407,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     await prepare(policy);
     const obstacle = await persistObstacle({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -342,6 +438,7 @@ describePostgis("PostGIS current-condition persistence", () => {
     await prepare(policy);
     const result = await persistObstacle({
       category: "surface-hazard",
+      severity: "major-obstruction",
       description: "Loose paving creates a trip hazard.",
       latitude: 43.29005,
       longitude: 5.37005,

@@ -106,6 +106,7 @@ export function LocalAccessibilityExplorer({
   const selectedScore = scores[selectedSegment.id]!;
   const selectedStatus = getScoreStatus(selectedScore);
   const selectedCurrentCondition = displayedCurrentConditions.find((condition) => condition.projection.segmentId === selectedSegment.id);
+  const selectedEffectiveCurrent = selectedCurrentCondition?.projection.effectiveResults?.[profileKey];
 
   function selectSegment(segmentId: string) {
     setSelectedSegmentId(segmentId);
@@ -250,12 +251,42 @@ export function LocalAccessibilityExplorer({
               <h4 className="text-sm font-medium" id="community-condition-heading">Community condition</h4>
               {selectedCurrentCondition ? (
                 <div className="mt-3 rounded-lg border border-amber-700/30 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-50">
-                  <Badge variant="outline">{selectedCurrentCondition.projection.active ? selectedCurrentCondition.projection.label : "No active provisional condition"}</Badge>
-                  <p className="mt-3 text-amber-900 dark:text-amber-100">This provisional community evidence does not change the baseline score or release.</p>
-                  <ol className="mt-3 grid gap-2" aria-label="Community evidence timeline">
+                   <Badge variant="outline">{selectedCurrentCondition.projection.active ? selectedCurrentCondition.projection.label : "No active provisional condition"}</Badge>
+                   <p className="mt-3 text-amber-900 dark:text-amber-100">This provisional community evidence does not change the baseline score or release.</p>
+                   <dl className="mt-3 grid gap-2 text-sm">
+                     <div>
+                       <dt className="font-medium">Baseline Local Accessibility</dt>
+                       <dd>Baseline Local Accessibility: {selectedStatus.label}</dd>
+                     </div>
+                     <div>
+                       <dt className="font-medium">Provisional effective-current Local Accessibility</dt>
+                       <dd>
+                         {selectedEffectiveCurrent?.available && selectedEffectiveCurrent.score !== undefined
+                           ? `Provisional effective-current Local Accessibility: Score ${Math.round(selectedEffectiveCurrent.score * 100)}%`
+                           : "Provisional effective-current Local Accessibility: Unavailable"}
+                       </dd>
+                       {!selectedEffectiveCurrent?.available && selectedEffectiveCurrent?.reason ? <dd className="mt-1">{selectedEffectiveCurrent.reason}</dd> : null}
+                     </div>
+                     <div>
+                       <dt className="font-medium">Policy</dt>
+                       <dd>Policy: {selectedCurrentCondition.projection.policyVersion}</dd>
+                     </div>
+                   </dl>
+                   {selectedCurrentCondition.projection.impactBreakdown?.length ? (
+                     <ul className="mt-3 grid gap-1" aria-label="Active category and severity impacts">
+                       {selectedCurrentCondition.projection.impactBreakdown.map((impact) => (
+                         <li key={impact.observationId}>
+                           {impact.category.replace("-", " ")}{impact.severity ? `, ${impact.severity.replace("-", " ")}` : ""}
+                           {impact.dimension ? `: ${Math.round(impact.impact * 100)}% ${impact.dimension} impact` : ": no numeric impact"}
+                         </li>
+                       ))}
+                     </ul>
+                   ) : null}
+                   <ol className="mt-3 grid gap-2" aria-label="Community evidence timeline">
                     {selectedCurrentCondition.observations.map((observation) => (
                       <li key={observation.id}>
-                        <span className="font-medium capitalize">{observation.eventType === "obstacle" ? "Obstacle reported" : observation.eventType === "resolution" ? "Resolution reported" : "Reopening reported"}</span>: {observation.description} (observed {observation.observedAt})
+                          <span className="font-medium capitalize">{observation.eventType === "obstacle" ? "Obstacle reported" : observation.eventType === "resolution" ? "Resolution reported" : "Reopening reported"}</span>: {observation.description}
+                          {observation.severity ? ` (${observation.category.replace("-", " ")}, ${observation.severity.replace("-", " ")})` : ` (${observation.category.replace("-", " ")})`} (observed {observation.observedAt})
                       </li>
                     ))}
                   </ol>
@@ -269,7 +300,14 @@ export function LocalAccessibilityExplorer({
             </section>
           </CardContent>
         </Card>
-        <CalculationInspector profileKey={profileKey} release={release} score={selectedScore} segment={selectedSegment} />
+        <CalculationInspector
+          {...(selectedCurrentCondition ? { currentCondition: selectedCurrentCondition.projection } : {})}
+          {...(selectedEffectiveCurrent ? { effectiveCurrent: selectedEffectiveCurrent } : {})}
+          profileKey={profileKey}
+          release={release}
+          score={selectedScore}
+          segment={selectedSegment}
+        />
       </section>
       {submitObstacle ? <CommunityConditionsPanel onSaved={reconcileObservation} submitObstacle={submitObstacle} /> : null}
       {submitConditionEvent ? <ConditionLifecyclePanel conditions={displayedCurrentConditions} onSaved={reconcileConditionEvent} submitConditionEvent={submitConditionEvent} /> : null}

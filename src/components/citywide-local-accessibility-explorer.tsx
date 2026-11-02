@@ -64,6 +64,7 @@ function CitywideReleaseView({ refreshConditions, release }: { refreshConditions
   const selectedCondition = selectedSegment
     ? conditions.find((condition) => condition.projection.segmentId === selectedSegment.id && condition.projection.baselineReleaseId === release.manifest.releaseId)
     : undefined;
+  const selectedEffectiveCurrent = selectedCondition?.projection.effectiveResults?.[profileKey];
   const filteredResults = useMemo(() => {
     if (!segmentIndex) return undefined;
     const segments = [] as typeof segmentIndex;
@@ -183,10 +184,29 @@ function CitywideReleaseView({ refreshConditions, release }: { refreshConditions
               <CardTitle className="text-2xl"><h3 id="selected-segment-heading">Selected segment: {selectedSegment.id}</h3></CardTitle>
             </CardHeader>
             <CardContent>
-              {selectedCondition ? <p className="rounded-lg border border-amber-700/30 bg-amber-50 p-3 text-sm text-amber-950">{selectedCondition.projection.label}. This provisional community evidence does not change the baseline score or release.</p> : null}
+              {selectedCondition ? (
+                <div className="grid gap-2 rounded-lg border border-amber-700/30 bg-amber-50 p-3 text-sm text-amber-950">
+                  <p>{selectedCondition.projection.label}. This provisional community evidence does not change the baseline score or release.</p>
+                  <p>Baseline Local Accessibility: {score.profile.score === undefined ? "Insufficient evidence" : `Score ${Math.round(score.profile.score * 100)}%`}</p>
+                  <p>
+                    {selectedEffectiveCurrent?.available && selectedEffectiveCurrent.score !== undefined
+                      ? `Provisional effective-current Local Accessibility: Score ${Math.round(selectedEffectiveCurrent.score * 100)}%`
+                      : "Provisional effective-current Local Accessibility: Unavailable"}
+                  </p>
+                  {!selectedEffectiveCurrent?.available && selectedEffectiveCurrent?.reason ? <p>{selectedEffectiveCurrent.reason}</p> : null}
+                  <p>Policy: {selectedCondition.projection.policyVersion}</p>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
-          <CalculationInspector profileKey={profileKey} release={{ ...release, segments: [selectedSegment] }} score={score} segment={selectedSegment} />
+          <CalculationInspector
+            {...(selectedCondition ? { currentCondition: selectedCondition.projection } : {})}
+            {...(selectedEffectiveCurrent ? { effectiveCurrent: selectedEffectiveCurrent } : {})}
+            profileKey={profileKey}
+            release={{ ...release, segments: [selectedSegment] }}
+            score={score}
+            segment={selectedSegment}
+          />
         </section>
       ) : <p className="mt-6 text-sm text-muted-foreground" role="status">Select a city segment on the map to inspect its baseline evidence.</p>}
     </section>

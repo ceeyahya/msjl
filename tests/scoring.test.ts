@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { linearBarrier, scoreSegment, scoreSegments, type LocalAccessibilityConfig } from "../src/scoring.js";
+import {
+  deriveEffectiveCurrentScore,
+  linearBarrier,
+  scoreSegment,
+  scoreSegments,
+  type LocalAccessibilityConfig,
+} from "../src/scoring.js";
 
 const config: LocalAccessibilityConfig = {
   version: "1.0.0",
@@ -113,5 +119,59 @@ describe("scoreSegment", () => {
     );
 
     expect(result.mapCoverage).toEqual({ coverage: 0.5, sufficientSegments: 1, totalSegments: 2 });
+  });
+});
+
+describe("deriveEffectiveCurrentScore", () => {
+  it("composes active physical impacts with the immutable baseline and leaves unscored evidence visible without a numeric impact", () => {
+    const baseline = scoreSegment(
+      { id: "sample-effective-current", metrics: { steps: { value: 5, coverage: 1 } } },
+      config,
+      "wheelchair",
+    );
+
+    const result = deriveEffectiveCurrentScore(baseline, config, "wheelchair", [
+      { observationId: "minor", dimension: "physical", impact: 0.15 },
+      { observationId: "major", dimension: "physical", impact: 0.5 },
+      { observationId: "other", impact: 0 },
+    ]);
+
+    // A 0.5 baseline barrier with 0.15 and 0.5 impacts becomes
+    // 1 - (1 - 0.5) * (1 - 0.15) * (1 - 0.5) = 0.7875.
+    expect(result).toMatchObject({
+      available: true,
+      profile: { coverage: 0.75, sufficient: true },
+      dimensions: {
+        physical: { baselineBarrier: 0.5, effectiveBarrier: 0.7875 },
+      },
+      impacts: [
+        { observationId: "minor", dimension: "physical", impact: 0.15 },
+        { observationId: "major", dimension: "physical", impact: 0.5 },
+        { observationId: "other", impact: 0 },
+      ],
+    });
+    expect(result.profile.score).toBeCloseTo(0.2125);
+  });
+
+  it("does not derive an effective score when the baseline physical dimension is unavailable", () => {
+    const physicalOptionalConfig = {
+      ...config,
+      profiles: { wheelchair: { minimumCoverage: 0.2, weights: { physical: 0.25, sensory: 0.75 } } },
+    };
+    const baseline = scoreSegment(
+      { id: "sample-unavailable-effective-current", metrics: { noise: { value: 70, coverage: 1 } } },
+      physicalOptionalConfig,
+      "wheelchair",
+    );
+
+    const result = deriveEffectiveCurrentScore(baseline, physicalOptionalConfig, "wheelchair", [
+      { observationId: "major", dimension: "physical", impact: 0.5 },
+    ]);
+
+    expect(result).toMatchObject({
+      available: false,
+      reason: "The baseline physical dimension does not meet its coverage gate.",
+      profile: { score: undefined, coverage: 0.75, sufficient: true },
+    });
   });
 });

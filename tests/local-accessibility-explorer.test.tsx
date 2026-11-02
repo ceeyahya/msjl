@@ -103,6 +103,42 @@ describe("LocalAccessibilityExplorer", () => {
     expect(within(selected).getByText("This does not confirm that no obstacle is present.")).toBeTruthy();
   });
 
+  it("shows baseline and policy-derived effective-current evidence separately", () => {
+    const conditions: CurrentCondition[] = [{
+      ...currentConditions[0]!,
+      projection: {
+        ...currentConditions[0]!.projection,
+        policyVersion: "category-severity-v1",
+        impactBreakdown: [{
+          observationId: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+          category: "blocked-path",
+          severity: "major-obstruction",
+          dimension: "physical",
+          impact: 0.5,
+        }],
+        effectiveResults: {
+          wheelchair: {
+            available: true,
+            score: 0.39,
+            coverage: 1,
+            sufficient: true,
+            dimensions: { physical: { baselineBarrier: 0.22, effectiveBarrier: 0.61 } },
+          },
+        },
+      },
+    }];
+    render(<LocalAccessibilityExplorer currentConditions={conditions} profileKey="wheelchair" release={sampleRelease} />);
+
+    const selected = screen.getByRole("region", { name: /selected segment: marseille-sample-001/i });
+    expect(within(selected).getByText("Baseline Local Accessibility: Score 78%")).toBeTruthy();
+    expect(within(selected).getByText("Provisional effective-current Local Accessibility: Score 39%")).toBeTruthy();
+    expect(within(selected).getAllByText("Policy: category-severity-v1")).toHaveLength(2);
+    expect(within(selected).getAllByText(/blocked path, major obstruction/i)).toHaveLength(2);
+    const inspector = screen.getByRole("region", { name: "Calculation inspector" });
+    expect(within(inspector).getByText("Policy: category-severity-v1")).toBeTruthy();
+    expect(within(inspector).getByText(/blocked path, major obstruction/i)).toBeTruthy();
+  });
+
   it("reconciles an assigned submission into the explorer without changing its baseline score", async () => {
     const user = userEvent.setup();
     render(

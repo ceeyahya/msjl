@@ -75,6 +75,25 @@ export interface SegmentScores {
   };
 }
 
+export interface CurrentConditionImpact {
+  observationId: string;
+  dimension?: string;
+  impact: number;
+}
+
+export interface EffectiveCurrentDimension {
+  baselineBarrier: number | undefined;
+  effectiveBarrier: number | undefined;
+}
+
+export interface EffectiveCurrentScore {
+  available: boolean;
+  reason?: string;
+  profile: ProfileResult;
+  dimensions: Record<string, EffectiveCurrentDimension>;
+  impacts: CurrentConditionImpact[];
+}
+
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 
 export const isDirectionalMetric = (metric: ScalarMetric | DirectionalMetric): metric is DirectionalMetric =>
@@ -142,6 +161,73 @@ export function scoreSegment(
     : undefined;
 
   return { indicators, dimensions, profile: { score, coverage: profileCoverage, sufficient } };
+}
+
+export function deriveEffectiveCurrentScore(
+  baseline: SegmentScore,
+  config: LocalAccessibilityConfig,
+  profileKey: string,
+  impacts: CurrentConditionImpact[],
+): EffectiveCurrentScore {
+  const profile = config.profiles[profileKey];
+  if (!profile) throw new Error(`Unknown profile: ${profileKey}`);
+
+  const dimensions = Object.fromEntries(Object.entries(baseline.dimensions).map(([key, result]) => [key, {
+    baselineBarrier: result.barrier,
+    effectiveBarrier: result.barrier,
+  }])) as Record<string, EffectiveCurrentDimension>;
+
+  if (!baseline.profile.sufficient) {
+    return {
+      available: false,
+      reason: "The baseline profile does not meet its coverage gate.",
+      profile: baseline.profile,
+      dimensions,
+      impacts,
+    };
+  }
+
+  const impactsByDimension = new Map<string, CurrentConditionImpact[]>();
+  for (const impact of impacts) {
+    if (!impact.dimension || impact.impact === 0) continue;
+    const dimensionImpacts = impactsByDimension.get(impact.dimension) ?? [];
+    dimensionImpacts.push(impact);
+    impactsByDimension.set(impact.dimension, dimensionImpacts);
+  }
+
+  for (const [dimensionKey, dimensionImpacts] of impactsByDimension) {
+    const baselineDimension = baseline.dimensions[dimensionKey];
+    const dimension = dimensions[dimensionKey];
+    if (!baselineDimension?.sufficient || baselineDimension.barrier === undefined || !dimension) {
+      return {
+        available: false,
+        reason: `The baseline ${dimensionKey} dimension does not meet its coverage gate.`,
+        profile: { ...baseline.profile, score: undefined },
+        dimensions,
+        impacts,
+      };
+    }
+    dimension.effectiveBarrier = 1 - (1 - baselineDimension.barrier) * dimensionImpacts.reduce(
+      (remaining, impact) => remaining * (1 - impact.impact),
+      1,
+    );
+  }
+
+  const weightedDimensions = Object.entries(profile.weights).filter(([, weight]) => weight > 0);
+  const availableDimensions = weightedDimensions.filter(([key]) => baseline.dimensions[key]?.sufficient);
+  const availableProfileWeight = availableDimensions.reduce((sum, [, weight]) => sum + weight, 0);
+  const score = availableDimensions.reduce((product, [key, weight]) => {
+    const barrier = dimensions[key]?.effectiveBarrier;
+    if (barrier === undefined) return product;
+    return product * (1 - Math.min(barrier, config.dimensionBarrierCap)) ** (weight / availableProfileWeight);
+  }, 1);
+
+  return {
+    available: true,
+    profile: { ...baseline.profile, score },
+    dimensions,
+    impacts,
+  };
 }
 
 export function scoreSegments(

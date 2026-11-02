@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 
 import {
   obstacleCategories,
+  obstacleSeverities,
   validateObstacleSubmission,
   type ObstacleSubmission,
   type PersistedObstacleResult,
@@ -24,6 +25,10 @@ function failureMessage(error: unknown): string {
   return "Your observation could not be saved. Check your connection and try again.";
 }
 
+function profileLabel(profileKey: string): string {
+  return profileKey.replaceAll(/[-_]/gu, " ").replace(/\b\w/gu, (letter) => letter.toUpperCase());
+}
+
 export function CommunityConditionsPanel({
   onSaved,
   submitObstacle,
@@ -32,6 +37,7 @@ export function CommunityConditionsPanel({
   submitObstacle: (submission: ObstacleSubmission) => Promise<PersistedObstacleResult>;
 }) {
   const [state, setState] = useState<SubmissionState>({ status: "idle" });
+  const [category, setCategory] = useState<ObstacleSubmission["category"]>("blocked-path");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,6 +46,7 @@ export function CommunityConditionsPanel({
     try {
       const submission = validateObstacleSubmission({
         category: form.get("category"),
+        ...(category === "other" ? {} : { severity: form.get("severity") }),
         description: form.get("description"),
         latitude: Number(form.get("latitude")),
         longitude: Number(form.get("longitude")),
@@ -68,10 +75,20 @@ export function CommunityConditionsPanel({
           <form className="grid gap-4" onSubmit={handleSubmit}>
             <label className="text-sm font-medium" htmlFor="obstacle-category">
               Obstacle type
-              <select className={inputClassName()} defaultValue="blocked-path" id="obstacle-category" name="category">
+              <select className={inputClassName()} id="obstacle-category" name="category" onChange={(event) => setCategory(event.target.value as ObstacleSubmission["category"])} value={category}>
                 {obstacleCategories.map((category) => <option key={category} value={category}>{category.replace("-", " ")}</option>)}
               </select>
             </label>
+            {category !== "other" ? (
+              <label className="text-sm font-medium" htmlFor="obstacle-severity">
+                Severity
+                <select className={inputClassName()} defaultValue="minor-obstruction" id="obstacle-severity" name="severity" required>
+                  {obstacleSeverities.map((severity) => <option key={severity} value={severity}>{severity.replace("-", " ")}</option>)}
+                </select>
+              </label>
+            ) : (
+              <p className="text-sm text-muted-foreground">Other observations remain visible and auditable but do not change an effective-current score.</p>
+            )}
             <label className="text-sm font-medium" htmlFor="obstacle-description">
               What did you observe?
               <textarea className={inputClassName()} id="obstacle-description" maxLength={500} name="description" required rows={4} />
@@ -116,7 +133,25 @@ export function CommunityConditionsPanel({
                   <p className="font-medium">Saved and assigned to {state.result.assignment.segmentId}</p>
                   <p className="text-sm text-muted-foreground">Nearest eligible segment, {state.result.assignment.distanceMetres.toFixed(1)} m away.</p>
                   <Badge variant="outline">{state.result.projection.label}</Badge>
+                  {state.result.observation.severity ? <p className="text-sm text-muted-foreground">Severity: {state.result.observation.severity.replace("-", " ")}. Policy: {state.result.projection.policyVersion}.</p> : null}
                   <p className="text-sm text-muted-foreground">The baseline score is unchanged. This report affects only the separate current condition.</p>
+                  {Object.entries(state.result.projection.effectiveResults ?? {}).map(([profileKey, result]) => (
+                    <p className="text-sm text-muted-foreground" key={profileKey}>
+                      {profileLabel(profileKey)} provisional effective-current result: {result.available && result.score !== undefined
+                        ? `Score ${Math.round(result.score * 100)}%`
+                        : `Unavailable. ${result.reason ?? ""}`}
+                    </p>
+                  ))}
+                  {state.result.projection.impactBreakdown?.length ? (
+                    <ul className="grid gap-1 text-sm text-muted-foreground" aria-label="Effective-current impact evidence">
+                      {state.result.projection.impactBreakdown.map((impact) => (
+                        <li key={impact.observationId}>
+                          {impact.category.replace("-", " ")}{impact.severity ? `, ${impact.severity.replace("-", " ")}` : ""}
+                          {impact.dimension ? `: ${Math.round(impact.impact * 100)}% ${impact.dimension} impact` : ": no numeric impact"}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </>
               ) : (
                 <>

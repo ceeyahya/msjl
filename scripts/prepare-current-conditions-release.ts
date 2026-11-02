@@ -92,6 +92,8 @@ try {
   await prepareBaselineRelease({
     releaseId: release.manifest.releaseId,
     segmentsArtifactSha256: release.manifest.artifacts.segments.sha256,
+    configArtifactSha256: release.manifest.artifacts.config.sha256,
+    config: release.config,
     expectedEligibleSegmentCount,
     segments: release.segments,
   });

@@ -2,8 +2,13 @@ export const obstacleCategories = ["blocked-path", "step", "surface-hazard", "ot
 
 export type ObstacleCategory = (typeof obstacleCategories)[number];
 
+export const obstacleSeverities = ["minor-obstruction", "major-obstruction", "impassable-dangerous"] as const;
+
+export type ObstacleSeverity = (typeof obstacleSeverities)[number];
+
 export interface ObstacleSubmission {
   category: ObstacleCategory;
+  severity?: ObstacleSeverity;
   description: string;
   latitude: number;
   longitude: number;
@@ -23,7 +28,7 @@ export interface CurrentConditionPolicy {
   baselineReleaseId: string;
   eligibilityRuleVersion: string;
   localInfluenceMetres: number;
-  projectionPolicyVersion: string;
+  impactPolicy: CategorySeverityPolicy;
 }
 
 export interface AssignedObservation {
@@ -50,11 +55,14 @@ export interface CurrentConditionProjection {
   baselineReleaseId: string;
   segmentId: string;
   localInfluenceMetres: number;
+  impactBreakdown?: CurrentConditionImpact[];
+  effectiveResults?: Record<string, EffectiveCurrentResult>;
 }
 
 export interface PersistedObstacleObservation {
   id: string;
   category: ObstacleCategory;
+  severity?: ObstacleSeverity;
   description: string;
   latitude: number;
   longitude: number;
@@ -87,11 +95,59 @@ export interface CurrentConditionsSnapshot {
 export interface CurrentConditionObservation {
   id: string;
   category: ObstacleCategory;
+  severity?: ObstacleSeverity;
   description: string;
   eventType: "obstacle" | "resolution" | "reopening";
   observedAt: string;
   recordedAt: string;
   relatedObservationId: string | null;
+}
+
+export interface CurrentConditionImpact {
+  observationId: string;
+  category: ObstacleCategory;
+  severity?: ObstacleSeverity;
+  dimension?: string;
+  impact: number;
+  policyVersion?: string;
+}
+
+export interface EffectiveCurrentResult {
+  available: boolean;
+  reason?: string;
+  score?: number;
+  coverage: number;
+  sufficient: boolean;
+  dimensions: Record<string, { baselineBarrier?: number; effectiveBarrier?: number }>;
+}
+
+const scoreableObstacleCategories = new Set<ObstacleCategory>(["blocked-path", "step", "surface-hazard"]);
+
+export interface CategorySeverityPolicy {
+  version: string;
+  impacts: Record<ObstacleSeverity, number>;
+}
+
+export const categorySeverityPolicy: CategorySeverityPolicy = {
+  version: "category-severity-v1",
+  impacts: {
+    "minor-obstruction": 0.15,
+    "major-obstruction": 0.5,
+    "impassable-dangerous": 0.85,
+  },
+};
+
+export function categorySeverityImpact(
+  policy: CategorySeverityPolicy,
+  observationId: string,
+  category: ObstacleCategory,
+  severity: ObstacleSeverity | undefined,
+): CurrentConditionImpact {
+  if (!scoreableObstacleCategories.has(category) || !severity) {
+    return { observationId, category, ...(severity ? { severity } : {}), impact: 0 };
+  }
+  const impact = policy.impacts[severity];
+  return { observationId, category, severity, dimension: "physical", impact };
 }
 
 export interface ConditionEventSubmission {
@@ -129,6 +185,13 @@ export function validateObstacleSubmission(value: unknown): ObstacleSubmission {
   if (!obstacleCategories.includes(value.category as ObstacleCategory)) {
     invalidSubmission("category must be one of blocked-path, step, surface-hazard, or other");
   }
+  const category = value.category as ObstacleCategory;
+  if (scoreableObstacleCategories.has(category) && !obstacleSeverities.includes(value.severity as ObstacleSeverity)) {
+    invalidSubmission("severity must be minor-obstruction, major-obstruction, or impassable-dangerous for scoreable categories");
+  }
+  if (category === "other" && value.severity !== undefined && value.severity !== null && value.severity !== "") {
+    invalidSubmission("other observations must not include a severity");
+  }
   if (typeof value.description !== "string" || value.description.trim().length === 0 || value.description.trim().length > 500) {
     invalidSubmission("description must contain between 1 and 500 characters");
   }
@@ -141,7 +204,8 @@ export function validateObstacleSubmission(value: unknown): ObstacleSubmission {
   if (!validObservedDate(value.observedAt)) invalidSubmission("observedAt must be an ISO calendar date");
 
   return {
-    category: value.category as ObstacleCategory,
+    category,
+    ...(scoreableObstacleCategories.has(category) ? { severity: value.severity as ObstacleSeverity } : {}),
     description: value.description.trim(),
     latitude: value.latitude,
     longitude: value.longitude,
@@ -248,7 +312,7 @@ export function assignObstacle(
       active: true,
       condition: "reported-obstacle",
       label: "Provisional community-derived condition",
-      policyVersion: policy.projectionPolicyVersion,
+      policyVersion: policy.impactPolicy.version,
       baselineReleaseId: policy.baselineReleaseId,
       segmentId: nearestSegment.segment.id,
       localInfluenceMetres: policy.localInfluenceMetres,

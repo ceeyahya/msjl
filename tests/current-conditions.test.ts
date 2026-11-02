@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assignObstacle, validateConditionEventSubmission, validateObstacleSubmission } from "../src/current-conditions.js";
+import { assignObstacle, categorySeverityPolicy, validateConditionEventSubmission, validateObstacleSubmission } from "../src/current-conditions.js";
 
 const eligibleSegment = {
   id: "marseille-sample-001",
@@ -14,6 +14,7 @@ describe("current-condition obstacle submission", () => {
   it("assigns a valid obstacle to the nearest eligible segment and derives a provisional condition", () => {
     const submission = validateObstacleSubmission({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
@@ -22,10 +23,10 @@ describe("current-condition obstacle submission", () => {
 
     const result = assignObstacle(submission, [eligibleSegment], {
       assignmentThresholdMetres: 15,
+      impactPolicy: categorySeverityPolicy,
       baselineReleaseId: "sample-marseille-2026-10-28",
       eligibilityRuleVersion: "v1",
       localInfluenceMetres: 0,
-      projectionPolicyVersion: "v1",
     });
 
     expect(result).toMatchObject({
@@ -40,7 +41,7 @@ describe("current-condition obstacle submission", () => {
         active: true,
         condition: "reported-obstacle",
         label: "Provisional community-derived condition",
-        policyVersion: "v1",
+        policyVersion: "category-severity-v1",
         baselineReleaseId: "sample-marseille-2026-10-28",
         segmentId: "marseille-sample-001",
         localInfluenceMetres: 0,
@@ -52,6 +53,7 @@ describe("current-condition obstacle submission", () => {
   it("retains an out-of-range obstacle as unmatched without deriving a condition", () => {
     const submission = validateObstacleSubmission({
       category: "step",
+      severity: "major-obstruction",
       description: "A step blocks this entrance.",
       latitude: 43.291,
       longitude: 5.371,
@@ -60,10 +62,10 @@ describe("current-condition obstacle submission", () => {
 
     const result = assignObstacle(submission, [eligibleSegment], {
       assignmentThresholdMetres: 15,
+      impactPolicy: categorySeverityPolicy,
       baselineReleaseId: "sample-marseille-2026-10-28",
       eligibilityRuleVersion: "v1",
       localInfluenceMetres: 0,
-      projectionPolicyVersion: "v1",
     });
 
     expect(result).toEqual({
@@ -79,6 +81,7 @@ describe("current-condition obstacle submission", () => {
   it("rejects invalid geometry before it can reach an assignment", () => {
     expect(() => validateObstacleSubmission({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 93,
       longitude: 5.37005,
@@ -89,11 +92,32 @@ describe("current-condition obstacle submission", () => {
   it("rejects calendar dates that JavaScript would otherwise normalize", () => {
     expect(() => validateObstacleSubmission({
       category: "blocked-path",
+      severity: "minor-obstruction",
       description: "Temporary construction barrier narrows the pavement.",
       latitude: 43.29005,
       longitude: 5.37005,
       observedAt: "2026-02-30",
     })).toThrow("observedAt must be an ISO calendar date");
+  });
+
+  it("requires immutable severity for scoreable obstacle categories but keeps other unscored", () => {
+    expect(() => validateObstacleSubmission({
+      category: "blocked-path",
+      description: "Temporary construction barrier narrows the pavement.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    })).toThrow("severity must be");
+
+    const other = validateObstacleSubmission({
+      category: "other",
+      description: "A condition that needs review.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    });
+    expect(other.category).toBe("other");
+    expect(other).not.toHaveProperty("severity");
   });
 
   it("rejects lifecycle events without an obstacle UUID", () => {

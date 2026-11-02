@@ -1,5 +1,6 @@
 import { isDirectionalMetric, type DirectionalMetric, type IndicatorConfig, type ScalarMetric, type SegmentScore } from "../scoring.js";
 import type { LocalAccessibilityRelease, ReleaseSegment } from "../release.js";
+import type { CurrentConditionProjection, EffectiveCurrentResult } from "../current-conditions.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card.js";
 
 const indicatorLabels: Record<string, string> = {
@@ -86,11 +87,15 @@ function IndicatorEvidence({
 
 export function CalculationInspector({
   profileKey,
+  currentCondition,
+  effectiveCurrent,
   release,
   score,
   segment,
 }: {
   profileKey: string;
+  currentCondition?: Pick<CurrentConditionProjection, "policyVersion" | "impactBreakdown">;
+  effectiveCurrent?: EffectiveCurrentResult;
   release: LocalAccessibilityRelease;
   score: SegmentScore;
   segment: ReleaseSegment;
@@ -124,6 +129,28 @@ export function CalculationInspector({
             </dl>
             <p className="mt-3 text-sm text-muted-foreground">Profile coverage gate: {gateOutcome(score.profile.sufficient, profile.minimumCoverage)}.</p>
           </section>
+
+          {effectiveCurrent ? (
+            <section aria-labelledby="effective-current-result-heading">
+              <h5 className="font-medium" id="effective-current-result-heading">Provisional effective-current result</h5>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {effectiveCurrent.available && effectiveCurrent.score !== undefined
+                  ? `Provisional effective-current Local Accessibility: ${formatPercent(effectiveCurrent.score)}.`
+                  : `Provisional effective-current Local Accessibility is unavailable. ${effectiveCurrent.reason ?? ""}`}
+              </p>
+              {currentCondition ? <p className="mt-2 text-sm text-muted-foreground">Policy: {currentCondition.policyVersion}</p> : null}
+              {currentCondition?.impactBreakdown?.length ? (
+                <ul className="mt-2 grid gap-1 text-sm text-muted-foreground" aria-label="Effective-current impact evidence">
+                  {currentCondition.impactBreakdown.map((impact) => (
+                    <li key={impact.observationId}>
+                      {impact.category.replace("-", " ")}{impact.severity ? `, ${impact.severity.replace("-", " ")}` : ""}
+                      {impact.dimension ? `: ${formatPercent(impact.impact)} ${impact.dimension} impact` : ": no numeric impact"}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : null}
 
           <section aria-labelledby="indicator-evidence-heading">
             <h5 className="font-medium" id="indicator-evidence-heading">Indicator metrics and barriers</h5>
