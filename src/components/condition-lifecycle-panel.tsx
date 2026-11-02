@@ -23,31 +23,45 @@ export function ConditionLifecyclePanel({
 }) {
   const [message, setMessage] = useState<string>();
   const [hasError, setHasError] = useState(false);
+  const [pendingSubmission, setPendingSubmission] = useState<ConditionEventSubmission>();
+  const [failedSubmission, setFailedSubmission] = useState<ConditionEventSubmission>();
   const obstacles = conditions.flatMap((condition) => condition.observations
     .filter((observation) => observation.eventType === "obstacle")
     .map((observation) => ({ observation, segmentId: condition.projection.segmentId })));
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
+  async function saveEvent(submission: ConditionEventSubmission, formElement?: HTMLFormElement) {
+    setPendingSubmission(submission);
+    setFailedSubmission(undefined);
+    setHasError(false);
+    setMessage(`Pending ${eventLabel(submission.eventType).toLowerCase()}. The server has not updated the provisional condition yet.`);
     try {
-      const result = await submitConditionEvent({
-        eventType: form.get("eventType") === "reopening" ? "reopening" : "resolution",
-        obstacleObservationId: String(form.get("obstacleObservationId")),
-        description: String(form.get("description")).trim(),
-        observedAt: String(form.get("observedAt")),
-      });
+      const result = await submitConditionEvent(submission);
       onSaved(result);
+      setPendingSubmission(undefined);
       setHasError(false);
       setMessage(`${eventLabel(result.observation.eventType)} was saved as provisional community evidence.`);
-      formElement.reset();
+      formElement?.reset();
     } catch (error) {
+      setPendingSubmission(undefined);
+      setFailedSubmission(submission);
       setHasError(true);
       setMessage(error instanceof Error && error.message.startsWith("Invalid condition event:")
         ? error.message
         : "This event could not be saved. Check the selected obstacle and try again.");
     }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    await saveEvent({
+      clientRequestId: crypto.randomUUID(),
+      eventType: form.get("eventType") === "reopening" ? "reopening" : "resolution",
+      obstacleObservationId: String(form.get("obstacleObservationId")),
+      description: String(form.get("description")).trim(),
+      observedAt: String(form.get("observedAt")),
+    }, formElement);
   }
 
   return (
@@ -83,12 +97,13 @@ export function ConditionLifecyclePanel({
                 Observed on
                 <input className={inputClassName()} id="condition-event-observed-at" name="observedAt" required type="date" />
               </label>
-              <button className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" type="submit">
-                Save change observation
-              </button>
-            </form>
-          )}
+               <button className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60" disabled={pendingSubmission !== undefined} type="submit">
+                 {pendingSubmission ? "Saving change observation..." : "Save change observation"}
+               </button>
+             </form>
+           )}
           {message ? <p className="mt-4 text-sm" role={hasError ? "alert" : "status"}>{message}</p> : null}
+          {failedSubmission ? <button className="mt-3 min-h-11 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" onClick={() => { void saveEvent(failedSubmission); }} type="button">Try saving again</button> : null}
         </CardContent>
       </Card>
 

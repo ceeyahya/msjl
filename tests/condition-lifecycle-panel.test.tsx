@@ -53,12 +53,13 @@ describe("ConditionLifecyclePanel", () => {
     await user.type(screen.getByLabelText("Observed on"), "2026-10-30");
     await user.click(screen.getByRole("button", { name: "Save change observation" }));
 
-    expect(submitConditionEvent).toHaveBeenCalledWith({
+    expect(submitConditionEvent).toHaveBeenCalledWith(expect.objectContaining({
       eventType: "resolution",
       obstacleObservationId: condition.observations[0]!.id,
       description: "The barrier is no longer present.",
       observedAt: "2026-10-30",
-    });
+      clientRequestId: expect.any(String),
+    }));
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ projection: expect.objectContaining({ active: false }) }));
     expect((await screen.findByRole("status")).textContent).toContain("Resolution reported was saved as provisional community evidence.");
   });

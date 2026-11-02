@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -50,6 +51,84 @@ function ConditionsView({ baselineReleaseId = "sample-marseille-2026-10-28", fee
     <>
       <CurrentConditionsLiveStatus status={status} />
       <UnmatchedObservations observations={snapshot.unmatchedObservations} />
+    </>
+  );
+}
+
+function ReconciliationView({ baselineReleaseId = "sample-marseille-2026-10-28", feed, getSnapshot }: { baselineReleaseId?: string; feed: CurrentConditionsChangeFeed; getSnapshot: () => Promise<CurrentConditionsSnapshot> }) {
+  const { reconcileObstacle, snapshot } = useCurrentConditionsSync(emptySnapshot, baselineReleaseId, getSnapshot, feed);
+  return (
+    <>
+      <button onClick={() => reconcileObstacle({
+        observation: {
+          id: "7bdb430a-d503-4638-a13e-1b8e1ae13ec0",
+          category: "step",
+          severity: "major-obstruction",
+          description: "A step blocks this entrance.",
+          latitude: 43.291,
+          longitude: 5.371,
+          observedAt: "2026-10-29",
+          recordedAt: "2026-10-29T12:00:00.000Z",
+        },
+        assignment: {
+          status: "unmatched",
+          reason: "No eligible segment is within 15 m.",
+          baselineReleaseId: "sample-marseille-2026-10-28",
+          eligibilityRuleVersion: "conservative-pedestrian-network-v1",
+        },
+      })} type="button">
+        Reconcile saved observation
+      </button>
+      <UnmatchedObservations observations={snapshot.unmatchedObservations} />
+    </>
+  );
+}
+
+const activeConditionSnapshot: CurrentConditionsSnapshot = {
+  conditions: [{
+    projection: {
+      active: true,
+      condition: "reported-obstacle",
+      label: "Provisional community-derived condition",
+      policyVersion: "category-severity-v1",
+      baselineReleaseId: "sample-marseille-2026-10-28",
+      segmentId: "marseille-sample-001",
+      localInfluenceMetres: 0,
+    },
+    observations: [{
+      id: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+      category: "blocked-path",
+      description: "Temporary construction barrier narrows the pavement.",
+      eventType: "obstacle",
+      observedAt: "2026-10-29",
+      recordedAt: "2026-10-29T12:00:00.000Z",
+      relatedObservationId: null,
+    }],
+  }],
+  unmatchedObservations: [],
+};
+
+function LifecycleReconciliationView({ feed, getSnapshot }: { feed: CurrentConditionsChangeFeed; getSnapshot: () => Promise<CurrentConditionsSnapshot> }) {
+  const { reconcileConditionEvent, snapshot } = useCurrentConditionsSync(activeConditionSnapshot, "sample-marseille-2026-10-28", getSnapshot, feed);
+  const condition = snapshot.conditions[0]!;
+  return (
+    <>
+      <button onClick={() => reconcileConditionEvent({
+        observation: {
+          id: "2e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+          category: "blocked-path",
+          description: "The barrier is no longer present.",
+          eventType: "resolution",
+          observedAt: "2026-10-30",
+          recordedAt: "2026-10-30T12:00:00.000Z",
+          relatedObservationId: "e3fb5738-6797-4ed8-95d5-c45bc4ce789a",
+        },
+        projection: { ...activeConditionSnapshot.conditions[0]!.projection, active: false },
+      })} type="button">
+        Reconcile resolution
+      </button>
+      <p>{condition.projection.active ? "Active condition" : "Resolved condition"}</p>
+      <ol>{condition.observations.map((observation) => <li key={observation.id}>{observation.description}</li>)}</ol>
     </>
   );
 }
@@ -120,6 +199,54 @@ describe("useCurrentConditionsSync", () => {
     });
 
     expect(await screen.findByText("Persisted observation.")).toBeTruthy();
+  });
+
+  it("keeps a locally reconciled observation while a stale realtime snapshot catches up", async () => {
+    const user = userEvent.setup();
+    const remote = createFeed();
+    let resolveSnapshot: ((snapshot: CurrentConditionsSnapshot) => void) | undefined;
+    const staleSnapshot = new Promise<CurrentConditionsSnapshot>((resolve) => { resolveSnapshot = resolve; });
+    render(<ReconciliationView feed={remote.feed} getSnapshot={async () => staleSnapshot} />);
+
+    await user.click(screen.getByRole("button", { name: "Reconcile saved observation" }));
+    expect(screen.getByText("A step blocks this entrance.")).toBeTruthy();
+
+    remote.emitChange();
+
+    await act(async () => { resolveSnapshot?.(emptySnapshot); });
+    expect(screen.getByText("A step blocks this entrance.")).toBeTruthy();
+  });
+
+  it("discards local reconciliation when switching baseline releases", async () => {
+    const user = userEvent.setup();
+    const remote = createFeed();
+    const view = render(<ReconciliationView feed={remote.feed} getSnapshot={async () => emptySnapshot} />);
+
+    await user.click(screen.getByRole("button", { name: "Reconcile saved observation" }));
+    expect(screen.getByText("A step blocks this entrance.")).toBeTruthy();
+
+    view.rerender(<ReconciliationView baselineReleaseId="release-b" feed={remote.feed} getSnapshot={async () => emptySnapshot} />);
+
+    await waitFor(() => expect(screen.queryByText("A step blocks this entrance.")).toBeNull());
+  });
+
+  it("keeps a locally reconciled resolution and its timeline over a stale cross-browser snapshot", async () => {
+    const user = userEvent.setup();
+    const remote = createFeed();
+    let resolveSnapshot: ((snapshot: CurrentConditionsSnapshot) => void) | undefined;
+    const staleSnapshot = new Promise<CurrentConditionsSnapshot>((resolve) => { resolveSnapshot = resolve; });
+    render(<LifecycleReconciliationView feed={remote.feed} getSnapshot={async () => staleSnapshot} />);
+
+    await user.click(screen.getByRole("button", { name: "Reconcile resolution" }));
+    expect(screen.getByText("Resolved condition")).toBeTruthy();
+    expect(screen.getByText("The barrier is no longer present.")).toBeTruthy();
+
+    remote.emitChange();
+    await act(async () => { resolveSnapshot?.(activeConditionSnapshot); });
+
+    expect(screen.getByText("Resolved condition")).toBeTruthy();
+    expect(screen.getByText("Temporary construction barrier narrows the pavement.")).toBeTruthy();
+    expect(screen.getByText("The barrier is no longer present.")).toBeTruthy();
   });
 
   it("warns when live updates are unavailable", async () => {

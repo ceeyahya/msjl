@@ -30,17 +30,19 @@ function CommunityConditions() {
   const submitEvent = useServerFn(submitConditionEvent);
   const refreshConditions = useServerFn(getCurrentConditions);
   const { releaseId, snapshot: initialSnapshot } = Route.useLoaderData();
-  const { refresh, snapshot, status } = useCurrentConditionsSync(
+  const { reconcileConditionEvent, reconcileObstacle: reconcilePersistedObstacle, refresh, snapshot, status } = useCurrentConditionsSync(
     initialSnapshot,
     releaseId,
     () => refreshConditions({ data: { releaseId } }),
   );
 
-  function reconcileObstacle(_result: PersistedObstacleResult) {
+  function reconcileObstacle(result: PersistedObstacleResult) {
+    reconcilePersistedObstacle(result);
     void refresh();
   }
 
-  function reconcileEvent(_result: PersistedConditionEventResult) {
+  function reconcileEvent(result: PersistedConditionEventResult) {
+    reconcileConditionEvent(result);
     void refresh();
   }
 

@@ -184,6 +184,54 @@ describePostgis("PostGIS current-condition persistence", () => {
     ]));
   });
 
+  it("returns the first persisted result when a client retries the same obstacle request", async () => {
+    const policy = policyFor(`current-conditions-idempotent-${randomUUID()}`);
+    const clientRequestId = randomUUID();
+    await prepare(policy);
+    const submission = {
+      category: "blocked-path" as const,
+      clientRequestId,
+      severity: "major-obstruction" as const,
+      description: "Temporary construction barrier narrows the pavement.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    };
+
+    const first = await persistObstacle(submission, policy);
+    const retried = await persistObstacle(submission, policy);
+
+    expect(retried).toEqual(first);
+    expect((await listCurrentConditions(policy.baselineReleaseId))[0]!.observations).toHaveLength(1);
+  });
+
+  it("returns the first persisted result when a client retries the same lifecycle request", async () => {
+    const policy = policyFor(`current-conditions-idempotent-lifecycle-${randomUUID()}`);
+    await prepare(policy);
+    const obstacle = await persistObstacle({
+      category: "blocked-path",
+      severity: "minor-obstruction",
+      description: "Temporary construction barrier narrows the pavement.",
+      latitude: 43.29005,
+      longitude: 5.37005,
+      observedAt: "2026-10-29",
+    }, policy);
+    if (obstacle.assignment.status !== "assigned") throw new Error("Expected an assigned obstacle.");
+    const submission = {
+      clientRequestId: randomUUID(),
+      eventType: "resolution" as const,
+      obstacleObservationId: obstacle.observation.id,
+      description: "The barrier is no longer present.",
+      observedAt: "2026-10-30",
+    };
+
+    const first = await persistConditionEvent(submission, policy);
+    const retried = await persistConditionEvent(submission, policy);
+
+    expect(retried).toEqual(first);
+    expect((await listCurrentConditions(policy.baselineReleaseId))[0]!.observations).toHaveLength(2);
+  });
+
   it("persists the versioned severity policy evidence and restores it after reopening", async () => {
     const policy = policyFor(`current-conditions-effective-${randomUUID()}`);
     await prepare(policy);

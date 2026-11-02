@@ -8,6 +8,7 @@ export type ObstacleSeverity = (typeof obstacleSeverities)[number];
 
 export interface ObstacleSubmission {
   category: ObstacleCategory;
+  clientRequestId?: string;
   severity?: ObstacleSeverity;
   description: string;
   latitude: number;
@@ -151,6 +152,7 @@ export function categorySeverityImpact(
 }
 
 export interface ConditionEventSubmission {
+  clientRequestId?: string;
   eventType: "resolution" | "reopening";
   obstacleObservationId: string;
   description: string;
@@ -186,6 +188,9 @@ export function validateObstacleSubmission(value: unknown): ObstacleSubmission {
     invalidSubmission("category must be one of blocked-path, step, surface-hazard, or other");
   }
   const category = value.category as ObstacleCategory;
+  if (value.clientRequestId !== undefined && (typeof value.clientRequestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.clientRequestId))) {
+    invalidSubmission("clientRequestId must be a UUID when provided");
+  }
   if (scoreableObstacleCategories.has(category) && !obstacleSeverities.includes(value.severity as ObstacleSeverity)) {
     invalidSubmission("severity must be minor-obstruction, major-obstruction, or impassable-dangerous for scoreable categories");
   }
@@ -205,6 +210,7 @@ export function validateObstacleSubmission(value: unknown): ObstacleSubmission {
 
   return {
     category,
+    ...(value.clientRequestId === undefined ? {} : { clientRequestId: value.clientRequestId }),
     ...(scoreableObstacleCategories.has(category) ? { severity: value.severity as ObstacleSeverity } : {}),
     description: value.description.trim(),
     latitude: value.latitude,
@@ -218,6 +224,9 @@ export function validateConditionEventSubmission(value: unknown): ConditionEvent
   if (value.eventType !== "resolution" && value.eventType !== "reopening") {
     invalidConditionEvent("eventType must be resolution or reopening");
   }
+  if (value.clientRequestId !== undefined && (typeof value.clientRequestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.clientRequestId))) {
+    invalidConditionEvent("clientRequestId must be a UUID when provided");
+  }
   if (typeof value.obstacleObservationId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.obstacleObservationId)) {
     invalidConditionEvent("obstacleObservationId must be a UUID");
   }
@@ -227,6 +236,7 @@ export function validateConditionEventSubmission(value: unknown): ConditionEvent
   if (!validObservedDate(value.observedAt)) invalidConditionEvent("observedAt must be an ISO calendar date");
 
   return {
+    ...(value.clientRequestId === undefined ? {} : { clientRequestId: value.clientRequestId }),
     eventType: value.eventType,
     obstacleObservationId: value.obstacleObservationId,
     description: value.description.trim(),

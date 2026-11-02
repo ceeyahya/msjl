@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import {
   obstacleCategories,
@@ -14,7 +14,7 @@ type SubmissionState =
   | { status: "idle" }
   | { status: "pending"; submission: ObstacleSubmission }
   | { status: "saved"; result: PersistedObstacleResult }
-  | { status: "failed"; message: string };
+  | { status: "failed"; message: string; submission?: ObstacleSubmission };
 
 function inputClassName(error = false): string {
   return `mt-1 min-h-11 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring ${error ? "border-destructive" : "border-input"}`;
@@ -38,28 +38,40 @@ export function CommunityConditionsPanel({
 }) {
   const [state, setState] = useState<SubmissionState>({ status: "idle" });
   const [category, setCategory] = useState<ObstacleSubmission["category"]>("blocked-path");
+  const formRef = useRef<HTMLFormElement>(null);
+
+  async function saveObservation(submission: ObstacleSubmission) {
+    setState({ status: "pending", submission });
+    try {
+      const result = await submitObstacle(submission);
+      setState({ status: "saved", result });
+      onSaved?.(result);
+      formRef.current?.reset();
+    } catch (error) {
+      setState({ status: "failed", message: failureMessage(error), submission });
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    let submission: ObstacleSubmission;
     try {
-      const submission = validateObstacleSubmission({
+      submission = validateObstacleSubmission({
         category: form.get("category"),
+        clientRequestId: crypto.randomUUID(),
         ...(category === "other" ? {} : { severity: form.get("severity") }),
         description: form.get("description"),
         latitude: Number(form.get("latitude")),
         longitude: Number(form.get("longitude")),
         observedAt: form.get("observedAt"),
       });
-      setState({ status: "pending", submission });
-      const result = await submitObstacle(submission);
-      setState({ status: "saved", result });
-      onSaved?.(result);
-      formElement.reset();
     } catch (error) {
       setState({ status: "failed", message: failureMessage(error) });
+      return;
     }
+    await saveObservation(submission);
   }
 
   return (
@@ -72,7 +84,7 @@ export function CommunityConditionsPanel({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form className="grid gap-4" onSubmit={handleSubmit}>
+          <form className="grid gap-4" onSubmit={handleSubmit} ref={formRef}>
             <label className="text-sm font-medium" htmlFor="obstacle-category">
               Obstacle type
               <select className={inputClassName()} id="obstacle-category" name="category" onChange={(event) => setCategory(event.target.value as ObstacleSubmission["category"])} value={category}>
@@ -124,8 +136,13 @@ export function CommunityConditionsPanel({
         </CardHeader>
         <CardContent>
           {state.status === "idle" && <CardDescription>New observations are provisional community evidence until the server assigns them.</CardDescription>}
-          {state.status === "pending" && <p role="status">Saving obstacle observation near {state.submission.latitude}, {state.submission.longitude}.</p>}
-          {state.status === "failed" && <p className="text-destructive" role="alert">{state.message}</p>}
+          {state.status === "pending" && <p role="status">Pending observation: {state.submission.description}. The server has not assigned it to a segment yet.</p>}
+          {state.status === "failed" && (
+            <div className="grid gap-3">
+              <p className="text-destructive" role="alert">{state.message}</p>
+              {state.submission ? <button className="min-h-11 w-fit rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" onClick={() => { void saveObservation(state.submission!); }} type="button">Try saving again</button> : null}
+            </div>
+          )}
           {state.status === "saved" && (
             <div className="grid gap-3">
               {"projection" in state.result ? (
