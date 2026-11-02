@@ -121,6 +121,8 @@ git diff --check
 
 The automated suite verifies release checksums and schema, source-snapshot matching, immutable publication ordering, remote-manifest verification, pointer resolution, and cache behavior. It also verifies the citywide keyboard journey: choose a configured profile, filter score band and evidence status, select a result without using the map, and inspect both a valid baseline score and insufficient-evidence segment.
 
+For deployment acceptance across Local Accessibility, Community Conditions, and Neighborhood Context, follow `docs/deployed-evidence-verification.md`. It separates deterministic automated checks from the required two-browser, Realtime, pointer-identity, keyboard, and screen-reader checks against an approved environment.
+
 For a published release, additionally check in a production-like browser session that the map requests only viewport tiles, changing filters does not require the full GeoJSON artifact, and selecting a result loads only its relevant detail shard. Confirm that valid baseline scores and insufficient evidence have distinct map, filter, summary, and inspector presentation. Confirm that a provisional Community Condition is labelled as an overlay and does not change the displayed baseline score or release provenance.
 
 The OSM snapshot and generated citywide release are operational artifacts, not checked-in sample data. Preserve each published snapshot with its release so the result can be recreated.
