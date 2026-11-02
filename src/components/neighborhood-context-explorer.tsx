@@ -10,6 +10,7 @@ import {
 } from "../neighborhood-context-release-client.js";
 import { Badge } from "./ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card.js";
+import { NeighborhoodContextMap } from "./neighborhood-context-map.js";
 
 const RESULTS_PER_PAGE = 50;
 type ScoreBand = "all" | "high" | "medium" | "low";
@@ -28,7 +29,7 @@ function IndicatorValue({ label, value }: { label: string; value: number | undef
   return <div className="flex items-baseline justify-between gap-4 border-b py-2 text-sm last:border-0"><span>{label}</span><span className="font-medium">{value === undefined ? "Unavailable" : `${Math.round(value * 100)}%`}</span></div>;
 }
 
-function ContextReleaseView({ release }: { release: NeighborhoodContextReleaseClient }) {
+export function NeighborhoodContextReleaseView({ release }: { release: NeighborhoodContextReleaseClient }) {
   const [index, setIndex] = useState<ContextAreaSummary[]>();
   const [selectedArea, setSelectedArea] = useState<ContextArea>();
   const [error, setError] = useState<string>();
@@ -69,6 +70,16 @@ function ContextReleaseView({ release }: { release: NeighborhoodContextReleaseCl
     </div>
     <Card className="mt-8">
       <CardHeader>
+        <CardTitle><h3>Context map view</h3></CardTitle>
+        <CardDescription>Colour shows the independent Context score. Neutral areas have insufficient evidence.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <NeighborhoodContextMap evidenceStatus={evidenceStatus} onSelectArea={selectArea} scoreBand={scoreBand} tileSource={release.tileSource} />
+        <div aria-label="Context map legend" className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>Colour: valid Context score</span><span>Neutral: insufficient evidence</span></div>
+      </CardContent>
+    </Card>
+    <Card className="mt-6">
+      <CardHeader>
         <CardTitle><h3 id="context-results-heading">IRIS results</h3></CardTitle>
         <CardDescription>Use these controls and results to inspect the independently published Context release without relying on a map.</CardDescription>
       </CardHeader>
@@ -107,5 +118,5 @@ export function PublishedNeighborhoodContextExplorer({ pointerUrl }: { pointerUr
   }, [pointerUrl]);
   if (error) return <p className="mt-16 text-sm text-destructive" role="alert">{error}</p>;
   if (!release) return <p className="mt-16 text-sm text-muted-foreground" role="status">Loading the Neighborhood Context release.</p>;
-  return <ContextReleaseView key={release.manifest.releaseId} release={release} />;
+  return <NeighborhoodContextReleaseView key={release.manifest.releaseId} release={release} />;
 }

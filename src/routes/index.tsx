@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { Badge } from "../components/ui/badge.js";
 import { LocalAccessibilityExplorer } from "../components/local-accessibility-explorer.js";
 import { PublishedCitywideAccessibilityExplorer } from "../components/citywide-local-accessibility-explorer.js";
+import { UnifiedAccessibilityExplorer } from "../components/unified-accessibility-explorer.js";
 import { getCurrentConditions, submitConditionEvent, submitObstacleObservation } from "../current-conditions-api.js";
 import type { ConditionEventSubmission, ObstacleSubmission } from "../current-conditions.js";
 import { CurrentConditionsLiveStatus, useCurrentConditionsSync } from "../current-conditions-sync.js";
@@ -47,7 +48,10 @@ function SampleLocalAccessibility({ currentConditions }: { currentConditions: Aw
 function LocalAccessibility() {
   const currentConditions = Route.useLoaderData();
   const refreshConditions = useServerFn(getCurrentConditions);
+  const submitObstacle = useServerFn(submitObstacleObservation);
+  const submitEvent = useServerFn(submitConditionEvent);
   const citywideReleasePointerUrl = import.meta.env.VITE_LOCAL_ACCESSIBILITY_RELEASE_URL;
+  const contextReleasePointerUrl = import.meta.env.VITE_NEIGHBORHOOD_CONTEXT_RELEASE_URL;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
@@ -59,8 +63,10 @@ function LocalAccessibility() {
           configuration, source, and coverage.
         </p>
       </section>
-      {citywideReleasePointerUrl
-        ? <PublishedCitywideAccessibilityExplorer pointerUrl={citywideReleasePointerUrl} refreshConditions={(releaseId) => refreshConditions({ data: { releaseId } })} />
+      {citywideReleasePointerUrl && contextReleasePointerUrl
+        ? <UnifiedAccessibilityExplorer contextPointerUrl={contextReleasePointerUrl} localAccessibilityPointerUrl={citywideReleasePointerUrl} refreshConditions={(releaseId) => refreshConditions({ data: { releaseId } })} submitConditionEvent={(releaseId, submission) => submitEvent({ data: { releaseId, submission } })} submitObstacle={(releaseId, submission) => submitObstacle({ data: { releaseId, submission } })} />
+        : citywideReleasePointerUrl
+          ? <PublishedCitywideAccessibilityExplorer pointerUrl={citywideReleasePointerUrl} refreshConditions={(releaseId) => refreshConditions({ data: { releaseId } })} submitConditionEvent={(releaseId, submission) => submitEvent({ data: { releaseId, submission } })} submitObstacle={(releaseId, submission) => submitObstacle({ data: { releaseId, submission } })} />
         : <SampleLocalAccessibility currentConditions={currentConditions} />}
     </main>
   );

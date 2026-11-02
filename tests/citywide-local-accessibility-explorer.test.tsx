@@ -14,7 +14,7 @@ vi.mock("../src/components/citywide-local-accessibility-map.js", () => ({
   CitywideLocalAccessibilityMap: () => null,
 }));
 
-import { PublishedCitywideAccessibilityExplorer } from "../src/components/citywide-local-accessibility-explorer.js";
+import { CitywideReleaseView, PublishedCitywideAccessibilityExplorer } from "../src/components/citywide-local-accessibility-explorer.js";
 import { segmentDetailShard } from "../src/segment-detail-shard.js";
 
 const config = {
@@ -152,5 +152,53 @@ describe("PublishedCitywideAccessibilityExplorer", () => {
 
     const scoredHeading = await screen.findByRole("heading", { name: "Selected segment: segment-1" });
     expect(within(scoredHeading.closest("section")!).getAllByText("Score 83%").length).toBeGreaterThan(0);
+  });
+
+  it("uses a persisted effective-current value only for an actively affected segment", async () => {
+    syncMock.mockReturnValue({
+      snapshot: {
+        conditions: [{
+          projection: {
+            active: true,
+            baselineReleaseId: "marseille-2026-10-31",
+            condition: "reported-obstacle",
+            effectiveResults: { wheelchair: { available: true, coverage: 1, dimensions: {}, score: 0.39, sufficient: true } },
+            label: "Provisional community-derived condition",
+            localInfluenceMetres: 0,
+            policyVersion: "category-severity-v1",
+            segmentId: "segment-1",
+          },
+          observations: [],
+        }],
+        unmatchedObservations: [],
+      },
+      status: "unavailable",
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url === "https://data.example/release/segment-index.json") return { ok: true, json: async () => ({ schemaVersion: 1, segments: [
+        { id: "segment-1", profiles: { wheelchair: { score: 0.83, sufficient: true } } },
+        { id: "segment-2", profiles: { wheelchair: { score: 0.67, sufficient: true } } },
+      ] }) };
+      if (url === `https://data.example/release/segment-details/${segmentDetailShard("segment-1")}.json`) return { ok: true, json: async () => ({
+        "segment-1": { id: "segment-1", geometry: { type: "LineString", coordinates: [[5.37, 43.29], [5.3701, 43.29]] }, metrics: {}, relations: [], sourceWayIds: [] },
+      }) };
+      throw new Error(`Unexpected URL ${url}`);
+    }));
+
+    render(<CitywideReleaseView primaryScoreLayer="effective-current" refreshConditions={async () => ({ conditions: [], unmatchedObservations: [] })} release={{
+      baseUrl: "https://data.example/release",
+      config,
+      detailShardCount: 256,
+      detailTemplate: "segment-details/{shard}.json",
+      manifest: { releaseId: "marseille-2026-10-31", artifacts: { segmentIndex: { path: "segment-index.json" } } },
+      sources: [],
+      tileSource: { bounds: [5.19, 43.16, 5.61, 43.49], maxzoom: 15, minzoom: 10, tiles: ["https://data.example/release/tiles/{z}/{x}/{y}.pbf"] },
+    } as never} />);
+
+    const results = await screen.findByRole("list", { name: "Filtered segment results" });
+    expect(within(results).getByRole("button", { name: /segment-1.*score 39%/i })).toBeTruthy();
+    expect(within(results).getByRole("button", { name: /segment-2.*score 67%/i })).toBeTruthy();
+    expect(screen.getAllByRole("status").some((status) => /valid provisional effective-current score/i.test(status.textContent ?? ""))).toBe(true);
   });
 });
