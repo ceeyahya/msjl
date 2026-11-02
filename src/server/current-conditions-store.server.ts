@@ -17,7 +17,7 @@ import type {
   UnmatchedConditionObservation,
   UnmatchedObservation,
 } from "../current-conditions.js";
-import { categorySeverityImpact, categorySeverityPolicy, validateObstacleSubmission } from "../current-conditions.js";
+import { categorySeverityImpact, categorySeverityPolicy, validateConditionEventSubmission, validateObstacleSubmission } from "../current-conditions.js";
 import { currentConditionsChangePublisher } from "../current-conditions-change-feed.server.js";
 import type { CurrentConditionsChangePublisher } from "../current-conditions-change-feed.js";
 import {
@@ -309,26 +309,122 @@ async function refreshProjection(
   return projection;
 }
 
+async function loadPersistedObstacleResult(
+  client: PoolClient,
+  observationId: string,
+): Promise<PersistedObstacleResult> {
+  const result = await client.query<{
+    id: string;
+    release_id: string;
+    category: ObstacleSubmission["category"];
+    severity: ObstacleSeverity | null;
+    description: string;
+    latitude: string;
+    longitude: string;
+    observed_at: string;
+    recorded_at: string;
+    assignment_status: "assigned" | "unmatched";
+    segment_id: string | null;
+    method: "nearest" | null;
+    distance_metres: string | null;
+    reason: string | null;
+    eligibility_rule_version: string;
+    active: boolean | null;
+    condition: "reported-obstacle" | null;
+    label: "Provisional community-derived condition" | null;
+    policy_version: string | null;
+    local_influence_metres: number | null;
+    impact_breakdown: CurrentConditionImpact[] | null;
+    effective_results: Record<string, EffectiveCurrentResult> | null;
+  }>(
+    `SELECT observation.id, observation.release_id, observation.category, observation.severity, observation.description,
+       ST_Y(observation.location::geometry)::text AS latitude,
+       ST_X(observation.location::geometry)::text AS longitude,
+       observation.observed_at::text AS observed_at,
+       to_char(observation.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at,
+       assignment.assignment_status, assignment.segment_id, assignment.method, assignment.distance_metres::text,
+       assignment.reason, assignment.eligibility_rule_version, projection.active, projection.condition,
+       projection.label, projection.policy_version, projection.local_influence_metres,
+       projection.impact_breakdown, projection.effective_results
+     FROM condition_observations AS observation
+     JOIN observation_assignments AS assignment ON assignment.observation_id = observation.id
+     LEFT JOIN condition_projections AS projection
+       ON projection.release_id = assignment.release_id AND projection.segment_id = assignment.segment_id
+     WHERE observation.id = $1 AND observation.event_type = 'obstacle'`,
+    [observationId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("The saved obstacle observation could not be loaded.");
+  const observation = {
+    id: row.id,
+    category: row.category,
+    ...(row.severity ? { severity: row.severity } : {}),
+    description: row.description,
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    observedAt: row.observed_at,
+    recordedAt: row.recorded_at,
+  };
+  if (row.assignment_status === "unmatched") {
+    return {
+      observation,
+      assignment: {
+        status: "unmatched",
+        reason: row.reason!,
+        baselineReleaseId: row.release_id,
+        eligibilityRuleVersion: row.eligibility_rule_version,
+      },
+    };
+  }
+  if (!row.segment_id || row.method !== "nearest" || row.distance_metres === null || !row.condition || !row.label || !row.policy_version || row.local_influence_metres === null || row.active === null) {
+    throw new Error("The saved obstacle assignment is incomplete.");
+  }
+  return {
+    observation,
+    assignment: {
+      status: "assigned",
+      segmentId: row.segment_id,
+      method: row.method,
+      distanceMetres: Number(row.distance_metres),
+      baselineReleaseId: row.release_id,
+      eligibilityRuleVersion: row.eligibility_rule_version,
+    },
+    projection: {
+      active: row.active,
+      condition: row.condition,
+      label: row.label,
+      policyVersion: row.policy_version,
+      baselineReleaseId: row.release_id,
+      segmentId: row.segment_id,
+      localInfluenceMetres: row.local_influence_metres,
+      impactBreakdown: row.impact_breakdown ?? [],
+      effectiveResults: row.effective_results ?? {},
+    },
+  };
+}
+
 export async function persistObstacle(
   input: ObstacleSubmission,
   policy: CurrentConditionPolicy,
   publisher: CurrentConditionsChangePublisher = currentConditionsChangePublisher,
 ): Promise<PersistedObstacleResult> {
   const submission = validateObstacleSubmission(input);
+  const { clientRequestId: _clientRequestId, ...persistedSubmission } = submission;
   const client = await getPool().connect();
-  const observationId = randomUUID();
+  const observationId = submission.clientRequestId ?? randomUUID();
   const recordedAt = new Date().toISOString();
   const impact = categorySeverityImpact(policy.impactPolicy, observationId, submission.category, submission.severity);
 
   try {
     await client.query("BEGIN");
     await requirePreparedBaselineRelease(client, policy.baselineReleaseId);
-    await client.query(
+    const inserted = await client.query(
       `INSERT INTO condition_observations (
           id, release_id, event_type, category, severity, impact_policy_version, impact, description, observed_at, recorded_at, location
         ) VALUES (
           $1, $2, 'obstacle', $3, $4, $5, $6, $7, $8, ST_SetSRID(ST_MakePoint($9, $10), 4326)::geography
-        )`,
+        ) ON CONFLICT (id) DO NOTHING
+          RETURNING id`,
       [
         observationId,
         policy.baselineReleaseId,
@@ -343,6 +439,14 @@ export async function persistObstacle(
         submission.latitude,
       ],
     );
+    if (!inserted.rowCount) {
+      const persisted = await loadPersistedObstacleResult(client, observationId);
+      if (persisted.assignment.baselineReleaseId !== policy.baselineReleaseId) {
+        throw new Error("Invalid obstacle observation: clientRequestId belongs to another baseline release.");
+      }
+      await client.query("COMMIT");
+      return persisted;
+    }
 
     const nearest = await client.query<{ segment_id: string; distance_metres: string }>(
       `SELECT segment_id, ST_Distance(
@@ -378,7 +482,7 @@ export async function persistObstacle(
       await publishPersistedChange(publisher, policy.baselineReleaseId);
 
       return {
-        observation: { id: observationId, ...submission, recordedAt },
+        observation: { id: observationId, ...persistedSubmission, recordedAt },
         assignment,
       };
     }
@@ -402,7 +506,7 @@ export async function persistObstacle(
     await publishPersistedChange(publisher, policy.baselineReleaseId);
 
     return {
-      observation: { id: observationId, ...submission, recordedAt },
+      observation: { id: observationId, ...persistedSubmission, recordedAt },
       assignment,
       projection,
     };
@@ -414,20 +518,95 @@ export async function persistObstacle(
   }
 }
 
+async function loadPersistedConditionEventResult(
+  client: PoolClient,
+  observationId: string,
+): Promise<PersistedConditionEventResult | undefined> {
+  const result = await client.query<{
+    id: string;
+    category: CurrentCondition["observations"][number]["category"];
+    severity: ObstacleSeverity | null;
+    description: string;
+    event_type: "resolution" | "reopening";
+    observed_at: string;
+    recorded_at: string;
+    related_observation_id: string;
+    release_id: string;
+    segment_id: string;
+    active: boolean;
+    condition: "reported-obstacle";
+    label: "Provisional community-derived condition";
+    policy_version: string;
+    local_influence_metres: number;
+    impact_breakdown: CurrentConditionImpact[];
+    effective_results: Record<string, EffectiveCurrentResult>;
+  }>(
+    `SELECT event.id, event.category, event.severity, event.description, event.event_type,
+       event.observed_at::text AS observed_at,
+       to_char(event.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at,
+       event.related_observation_id, assignment.release_id, assignment.segment_id, projection.active,
+       projection.condition, projection.label, projection.policy_version, projection.local_influence_metres,
+       projection.impact_breakdown, projection.effective_results
+     FROM condition_observations AS event
+     JOIN condition_observations AS obstacle ON obstacle.id = event.related_observation_id
+     JOIN observation_assignments AS assignment ON assignment.observation_id = obstacle.id
+     JOIN condition_projections AS projection
+       ON projection.release_id = assignment.release_id AND projection.segment_id = assignment.segment_id
+     WHERE event.id = $1 AND event.event_type IN ('resolution', 'reopening')`,
+    [observationId],
+  );
+  const row = result.rows[0];
+  if (!row) return undefined;
+  return {
+    observation: {
+      id: row.id,
+      category: row.category,
+      ...(row.severity ? { severity: row.severity } : {}),
+      description: row.description,
+      eventType: row.event_type,
+      observedAt: row.observed_at,
+      recordedAt: row.recorded_at,
+      relatedObservationId: row.related_observation_id,
+    },
+    projection: {
+      active: row.active,
+      condition: row.condition,
+      label: row.label,
+      policyVersion: row.policy_version,
+      baselineReleaseId: row.release_id,
+      segmentId: row.segment_id,
+      localInfluenceMetres: row.local_influence_metres,
+      impactBreakdown: row.impact_breakdown,
+      effectiveResults: row.effective_results,
+    },
+  };
+}
+
 export async function persistConditionEvent(
   submission: ConditionEventSubmission,
   policy: CurrentConditionPolicy,
   publisher: CurrentConditionsChangePublisher = currentConditionsChangePublisher,
 ): Promise<PersistedConditionEventResult> {
+  const eventSubmission = validateConditionEventSubmission(submission);
   const client = await getPool().connect();
-  const observationId = randomUUID();
+  const observationId = eventSubmission.clientRequestId ?? randomUUID();
   const recordedAt = new Date().toISOString();
 
   try {
     await client.query("BEGIN");
     await requirePreparedBaselineRelease(client, policy.baselineReleaseId);
     // The target obstacle defines the lifecycle stream, so only one transition can validate it at a time.
-    await client.query("SELECT pg_advisory_xact_lock(0, hashtext($1))", [submission.obstacleObservationId]);
+    await client.query("SELECT pg_advisory_xact_lock(0, hashtext($1))", [eventSubmission.obstacleObservationId]);
+    if (eventSubmission.clientRequestId) {
+      const persisted = await loadPersistedConditionEventResult(client, observationId);
+      if (persisted) {
+        if (persisted.observation.relatedObservationId !== eventSubmission.obstacleObservationId || persisted.observation.eventType !== eventSubmission.eventType || persisted.projection.baselineReleaseId !== policy.baselineReleaseId) {
+          throw new Error("Invalid condition event: clientRequestId belongs to another event.");
+        }
+        await client.query("COMMIT");
+        return persisted;
+      }
+    }
     const target = await client.query<{
        category: CurrentCondition["observations"][number]["category"];
        severity: ObstacleSeverity | null;
@@ -450,7 +629,7 @@ export async function persistConditionEvent(
          AND obstacle.event_type = 'obstacle'
          AND assignment.assignment_status = 'assigned'
        FOR UPDATE OF obstacle`,
-      [submission.obstacleObservationId],
+       [eventSubmission.obstacleObservationId],
     );
     const obstacle = target.rows[0];
     if (!obstacle) throw new Error("Invalid condition event: the referenced obstacle is not assigned to a condition.");
@@ -458,21 +637,31 @@ export async function persistConditionEvent(
       throw new Error("Invalid condition event: the referenced obstacle belongs to another baseline release.");
     }
     const isActive = obstacle.latest_event_type !== "resolution";
-    if (submission.eventType === "resolution" && !isActive) {
+    if (eventSubmission.eventType === "resolution" && !isActive) {
       throw new Error("Invalid condition event: this obstacle already has a resolution observation.");
     }
-    if (submission.eventType === "reopening" && isActive) {
+    if (eventSubmission.eventType === "reopening" && isActive) {
       throw new Error("Invalid condition event: reopening requires a prior resolution observation.");
     }
 
-    await client.query(
+    const inserted = await client.query(
       `INSERT INTO condition_observations (
          id, release_id, event_type, category, severity, description, observed_at, recorded_at, location, related_observation_id
        ) SELECT $1, release_id, $2, category, severity, $3, $4, $5, location, id
         FROM condition_observations
-        WHERE id = $6`,
-      [observationId, submission.eventType, submission.description, submission.observedAt, recordedAt, submission.obstacleObservationId],
+         WHERE id = $6
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+       [observationId, eventSubmission.eventType, eventSubmission.description, eventSubmission.observedAt, recordedAt, eventSubmission.obstacleObservationId],
     );
+    if (!inserted.rowCount) {
+      const persisted = await loadPersistedConditionEventResult(client, observationId);
+      if (!persisted || persisted.observation.relatedObservationId !== eventSubmission.obstacleObservationId || persisted.observation.eventType !== eventSubmission.eventType || persisted.projection.baselineReleaseId !== policy.baselineReleaseId) {
+        throw new Error("Invalid condition event: clientRequestId belongs to another event.");
+      }
+      await client.query("COMMIT");
+      return persisted;
+    }
     const projection = await refreshProjection(client, policy.baselineReleaseId, obstacle.segment_id, policy, recordedAt);
     await client.query("COMMIT");
     await publishPersistedChange(publisher, policy.baselineReleaseId);
@@ -482,9 +671,9 @@ export async function persistConditionEvent(
         id: observationId,
         category: obstacle.category,
         ...(obstacle.severity ? { severity: obstacle.severity } : {}),
-        description: submission.description,
-        eventType: submission.eventType,
-        observedAt: submission.observedAt,
+        description: eventSubmission.description,
+        eventType: eventSubmission.eventType,
+        observedAt: eventSubmission.observedAt,
         recordedAt,
         relatedObservationId: submission.obstacleObservationId,
       },

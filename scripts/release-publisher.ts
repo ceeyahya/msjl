@@ -34,6 +34,7 @@ export interface PublicationPlan {
   releasePrefix: string;
   sourceBucket: string;
   sourceKey: string;
+  sourcePrefix: string;
 }
 
 export interface PublicationReport {
@@ -126,6 +127,7 @@ export function createPublicationPlan(options: {
     releasePrefix,
     sourceBucket: options.sourceBucket,
     sourceKey: `${sourcePrefix}/${options.releaseId}/${sourceFileName}`,
+    sourcePrefix,
   };
 }
 
@@ -157,7 +159,7 @@ export async function publishRelease(options: {
   onProgress?: ((completed: number, total: number) => void) | undefined;
   plan: PublicationPlan;
   releaseFiles: PublicationFile[];
-  sourceFile: PublicationFile;
+  sourceFiles: PublicationFile[];
   storage: ObjectStore;
 }): Promise<PublicationReport> {
   const { plan, storage } = options;
@@ -168,8 +170,10 @@ export async function publishRelease(options: {
     throw new Error("The release contains duplicate artifact paths.");
   }
 
+  const sourceFiles = [...options.sourceFiles];
+  if (!sourceFiles.length || new Set(sourceFiles.map((file) => file.path)).size !== sourceFiles.length) throw new Error("The publication requires uniquely named source files.");
   const files = [
-    { bucket: plan.sourceBucket, key: plan.sourceKey, file: options.sourceFile },
+    ...sourceFiles.map((file) => ({ bucket: plan.sourceBucket, key: `${plan.sourcePrefix}/${plan.pointer.releaseId}/${assertPath(file.path, "Source artifact path")}`, file })),
     ...releaseFiles
       .filter((file) => file !== manifest)
       .map((file) => ({ bucket: plan.releaseBucket, key: releaseKey(plan, file.path), file })),
@@ -177,11 +181,8 @@ export async function publishRelease(options: {
   let bytes = 0;
 
   if (!options.dryRun) {
-    const [manifestExists, sourceExists] = await Promise.all([
-      storage.objectExists(plan.releaseBucket, plan.manifestKey),
-      storage.objectExists(plan.sourceBucket, plan.sourceKey),
-    ]);
-    if (manifestExists || sourceExists) {
+    const existing = await Promise.all([storage.objectExists(plan.releaseBucket, plan.manifestKey), ...files.filter((file) => file.bucket === plan.sourceBucket).map((file) => storage.objectExists(file.bucket, file.key))]);
+    if (existing.some(Boolean)) {
       throw new Error("This immutable release ID or source snapshot has already been published.");
     }
   }

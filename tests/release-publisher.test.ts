@@ -44,7 +44,7 @@ describe("citywide release publisher", () => {
     const report = await publishRelease({
       plan,
       storage,
-      sourceFile: { path: "osm.json", read: async () => encoder.encode("source") },
+      sourceFiles: [{ path: "osm.json", read: async () => encoder.encode("source") }],
       releaseFiles: [
         { path: "config.json", read: async () => encoder.encode("config") },
         { path: "manifest.json", read: async () => manifest },
@@ -108,7 +108,7 @@ describe("citywide release publisher", () => {
     await expect(publishRelease({
       plan,
       storage,
-      sourceFile: { path: "osm.json", read: async () => encoder.encode("source") },
+      sourceFiles: [{ path: "osm.json", read: async () => encoder.encode("source") }],
       releaseFiles: [{ path: "manifest.json", read: async () => manifest }],
     })).rejects.toThrow("does not match the validated local manifest");
     expect(storage.writes.some((write) => write.key === "current.json")).toBe(false);
@@ -127,7 +127,7 @@ describe("citywide release publisher", () => {
       activate: false,
       plan,
       storage,
-      sourceFile: { path: "osm.json", read: async () => encoder.encode("source") },
+      sourceFiles: [{ path: "osm.json", read: async () => encoder.encode("source") }],
       releaseFiles: [{ path: "manifest.json", read: async () => manifest }],
     });
 
@@ -160,7 +160,7 @@ describe("citywide release publisher", () => {
       dryRun: true,
       plan,
       storage,
-      sourceFile: { path: "osm.json", read: async () => encoder.encode("source") },
+      sourceFiles: [{ path: "osm.json", read: async () => encoder.encode("source") }],
       releaseFiles: [{ path: "manifest.json", read: async () => manifest }],
     });
     expect(storage.writes).toHaveLength(0);

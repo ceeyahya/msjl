@@ -3,9 +3,11 @@ import { CircleAlert } from "lucide-react";
 
 import { Badge } from "../components/ui/badge.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card.js";
+import { PublishedNeighborhoodContextExplorer } from "../components/neighborhood-context-explorer.js";
 export const Route = createFileRoute("/neighborhood-context")({ component: NeighborhoodContext });
 
 function NeighborhoodContext() {
+  const pointerUrl = import.meta.env.VITE_NEIGHBORHOOD_CONTEXT_RELEASE_URL;
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-16 outline-none sm:px-6 sm:py-28" id="main-content" tabIndex={-1}>
       <section className="max-w-3xl">
@@ -15,7 +17,7 @@ function NeighborhoodContext() {
           Contextual evidence belongs to IRIS and neighborhood-scale areas, not to individual street segments.
         </p>
       </section>
-      <Card className="mt-16 sm:mt-24">
+      {pointerUrl ? <PublishedNeighborhoodContextExplorer pointerUrl={pointerUrl} /> : <Card className="mt-16 sm:mt-24">
         <CardHeader>
           <CircleAlert aria-hidden="true" className="mb-2 size-5 text-muted-foreground" />
           <CardTitle id="context-status" className="text-2xl">No Neighborhood Context release is available yet</CardTitle>
@@ -26,7 +28,7 @@ function NeighborhoodContext() {
             versioned area-scale evidence.
           </CardDescription>
         </CardContent>
-      </Card>
+      </Card>}
     </main>
   );
 }

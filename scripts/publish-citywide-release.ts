@@ -56,7 +56,7 @@ const report = await publishRelease({
   dryRun,
   plan,
   releaseFiles: await filesIn(releaseDirectory),
-  sourceFile: { path: basename(sourcePath), read: async () => sourceContent },
+  sourceFiles: [{ path: basename(sourcePath), read: async () => sourceContent }],
   onProgress: dryRun ? undefined : (completed, total) => console.log(`Uploaded ${completed}/${total} immutable objects.`),
   storage: dryRun ? {
     getObject: async () => { throw new Error("Dry runs do not read object storage."); },

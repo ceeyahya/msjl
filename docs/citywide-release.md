@@ -124,3 +124,27 @@ The automated suite verifies release checksums and schema, source-snapshot match
 For a published release, additionally check in a production-like browser session that the map requests only viewport tiles, changing filters does not require the full GeoJSON artifact, and selecting a result loads only its relevant detail shard. Confirm that valid baseline scores and insufficient evidence have distinct map, filter, summary, and inspector presentation. Confirm that a provisional Community Condition is labelled as an overlay and does not change the displayed baseline score or release provenance.
 
 The OSM snapshot and generated citywide release are operational artifacts, not checked-in sample data. Preserve each published snapshot with its release so the result can be recreated.
+
+## Neighborhood Context Releases
+
+Neighborhood Context is a separate IRIS-scale evidence product. It never consumes a Local Accessibility score, changes a baseline release, or publishes through `current.json`.
+
+`context-policy-v1` fixes the 2022-01-01 INSEE IRIS geography, Filosofi 2021 material-pressure thresholds, Tuesday-Thursday 07:00-20:00 RTM departure window, qualifying civic/free-service categories, 95% pedestrian-network population coverage gate, and equal-weight geometric mean. A policy change requires a new immutable policy ID and comparability record.
+
+Before a quarterly build, collect and retain the six required source snapshots: INSEE IRIS boundaries, Filosofi, RTM GTFS, authoritative civic-service register, INSEE population grid, and the OSM pedestrian-network extract. `sources.json` must record each source URL, retrieval time, version, licence, and SHA-256 checksum. The builder accepts only already population-weighted IRIS aggregates; each available material-pressure value must carry `qualifyingNote: 0` for `DISP_NOTE21`. It does not infer Context values from Local Accessibility data.
+
+```text
+npm run build-neighborhood-context-release -- --areas data/context/iris-2026-q4.geojson --config data/context/context-policy-v1.json --sources data/context/sources-2026-q4.json --source-directory data/context/snapshots-2026-q4 --output releases/marseille-context-2026-q4 --release-id marseille-context-2026-q4 --built-at 2026-11-02T00:00:00.000Z
+npm run validate-neighborhood-context-release -- releases/marseille-context-2026-q4
+```
+
+The generated release contains checksum-validated configuration, provenance, complete IRIS GeoJSON, polygon vector tiles, a compact `area-index.json`, and deterministic detail shards. The browser loads the pointer, manifest, configuration, source records, TileJSON, and compact index, then fetches only the selected IRIS detail shard.
+
+Publish the checksum-verified source files from `sources.json`, then publish and activate the independent `context-current.json` pointer.
+
+```text
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... npm run publish-neighborhood-context-release -- --release releases/marseille-context-2026-q4 --source-directory data/context/snapshots-2026-q4 --bucket <public-release-bucket> --source-bucket <private-source-bucket> --endpoint https://<s3-compatible-endpoint>
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... npm run rollback-neighborhood-context-release -- --release-id marseille-context-2026-q4 --bucket <public-release-bucket> --source-bucket <private-source-bucket> --endpoint https://<s3-compatible-endpoint>
+```
+
+The Context publisher uses `context-releases/<release-id>/`, `context-sources/<release-id>/`, and `context-current.json`, so it cannot activate or roll back a Local Accessibility release. Set `VITE_NEIGHBORHOOD_CONTEXT_RELEASE_URL` to the public `context-current.json` URL to expose the validated release in the application.

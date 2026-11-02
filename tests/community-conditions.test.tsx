@@ -2,7 +2,7 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CommunityConditionsPanel } from "../src/components/community-conditions-panel.js";
 import type { PersistedObstacleResult } from "../src/current-conditions.js";
@@ -50,7 +50,8 @@ describe("CommunityConditionsPanel", () => {
     await user.type(screen.getByLabelText("Observed on"), "2026-10-29");
     await user.click(screen.getByRole("button", { name: "Submit obstacle observation" }));
 
-    expect(screen.getByRole("status").textContent).toContain("Saving obstacle observation");
+    expect(screen.getByRole("status").textContent).toContain("Pending observation: Temporary construction barrier narrows the pavement.");
+    expect(screen.getByRole("status").textContent).toContain("has not assigned it to a segment yet");
 
     resolveSubmission?.({
       observation: {
@@ -115,6 +116,39 @@ describe("CommunityConditionsPanel", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("Your observation could not be saved.");
     expect(screen.queryByText(/Saved and assigned to/i)).toBeNull();
+  });
+
+  it("retries a failed write with the same validated observation", async () => {
+    const user = userEvent.setup();
+    const submitObstacle = vi.fn()
+      .mockRejectedValueOnce(new Error("The database is unavailable."))
+      .mockResolvedValueOnce({
+        observation: {
+          id: "7bdb430a-d503-4638-a13e-1b8e1ae13ec0",
+          category: "blocked-path" as const,
+          severity: "minor-obstruction" as const,
+          description: "A temporary barrier blocks the pavement.",
+          latitude: 43.2951,
+          longitude: 5.3698,
+          observedAt: "2026-10-29",
+          recordedAt: "2026-10-29T12:00:00.000Z",
+        },
+        assignment: {
+          status: "unmatched" as const,
+          reason: "No eligible segment is within 15 m.",
+          baselineReleaseId: "sample-marseille-2026-10-28",
+          eligibilityRuleVersion: "conservative-pedestrian-network-v1",
+        },
+      });
+    render(<CommunityConditionsPanel submitObstacle={submitObstacle} />);
+
+    await user.type(screen.getByLabelText("What did you observe?"), "A temporary barrier blocks the pavement.");
+    await user.type(screen.getByLabelText("Observed on"), "2026-10-29");
+    await user.click(screen.getByRole("button", { name: "Submit obstacle observation" }));
+    await user.click(await screen.findByRole("button", { name: "Try saving again" }));
+
+    expect(submitObstacle).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("Saved without a segment assignment")).toBeTruthy();
   });
 
   it("keeps a persisted unmatched observation separate from every segment", async () => {
